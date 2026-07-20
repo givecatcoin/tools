@@ -8,7 +8,7 @@ Snapline の処理は、どのコマンドでも同じ流れを通る。
 ```mermaid
 flowchart TB
   cli["1. main<br/>CLI を解釈する"]
-  pacePick["2. pace を決める<br/>通常: IdlePace<br/>background: BackgroundPace"]
+  pacePick["2. pace を決める<br/>通常: IdlePace<br/>--background: BackgroundPace"]
   op["3. 操作を選ぶ<br/>snapshot / restore / inspect"]
   object["4. object<br/>内容の取り込み・検証"]
   store["5. store<br/>.snapline へ読み書き"]
@@ -21,14 +21,14 @@ flowchart TB
   snaplinenore --> data
 
   background["background<br/>低優先度と資源監視"]
-  pacePick -.->|background コマンド時| background
+  pacePick -.->|--background 時| background
   background --> pacePick
 ```
 
 上から下へ読む。
 
 1. `main` がコマンドを受け取る
-2. ペースを決める（通常は待機なし、`background` なら監視付き）
+2. ペースを決める（通常は待機なし、`--background` なら監視付き）
 3. 同じ操作モジュールを呼ぶ（`snapshot` / `restore` / `inspect`）
 4. ファイル実体は `object` が扱う
 5. 置き場所とマニフェストは `store` が扱う
@@ -36,15 +36,15 @@ flowchart TB
 
 `install` だけはこの流れの外で、実行ファイルの PATH 登録だけを行う。
 
-## 通常と background の違い
+## 通常と --background の違い
 
 違いは **2. ペース** だけである。操作・包含除外・検証ルールは同じ。
 
-| | 通常 | background |
+| | 通常 | `--background` |
 | --- | --- | --- |
 | ペース | `IdlePace`（何もしない） | `BackgroundPace`（CPU/メモリ監視・低優先度） |
-| 呼び方 | `snapline snapshot` など | `snapline background snapshot` など |
-| 本体 | `create` / `restore` / `verify` | 同じ処理の `_with_pace` 版 |
+| 呼び方 | `snapline snapshot` など | `snapline --background snapshot` など |
+| 本体 | 同じ `_with_pace` 経路 | 同じ `_with_pace` 経路 |
 
 ## モジュール一覧
 
@@ -55,7 +55,7 @@ flowchart TB
 | `background` | 2（任意） | `BackgroundPace` の実装 |
 | `snapshot` | 3 | 記録 |
 | `restore` | 3 | 復元 |
-| `inspect` | 3 | 一覧・検証 |
+| `inspect` | 3 | 一覧（`log`）・検証 |
 | `object` | 4 | ハッシュ化・圧縮・検証付き I/O |
 | `store` | 5 | `.snapline` 構造・ロック・マニフェスト |
 | `model` | 6 | オンディスク JSON の型 |
@@ -85,11 +85,11 @@ main
 | コマンド | 経路 |
 | --- | --- |
 | `init` / `config` | `main` → `store` |
-| `list` | `main` → IdlePace → `inspect::list` → `store` |
+| `log` | `main` → `inspect::list` → `store` |
 | `snapshot` | `main` → IdlePace → `snapshot` → `object` / `store` |
 | `restore` | `main` → IdlePace → `restore` → `object` / `store` |
 | `verify` | `main` → IdlePace → `inspect::verify` → `object` / `store` |
-| `background snapshot` など | `main` → BackgroundPace → 同じ操作 → `object` / `store` |
+| `--background snapshot` など | `main` → BackgroundPace → 同じ操作 → `object` / `store` |
 | `install` | `main` → `install` |
 
 ## 変更時の目安

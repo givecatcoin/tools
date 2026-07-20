@@ -20,19 +20,20 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
 use crate::{
-    background::{BackgroundLimits, activate},
+    background::{BackgroundLimits, BackgroundPace, activate},
+    pace::{IdlePace, IoPace},
     store::Store,
 };
 
 // ============================================================================
 // 共通オプションとサブコマンドをまとめた CLI 定義。
-// `--tree` は履歴対象ツリー。省略時はカレントディレクトリから親方向へ
-// `.snapline` を探し、最も近い場所を対象ツリーとする。
+// `--tree` は履歴対象ツリー。省略時はカレントから親方向へ `.snapline` を探す。
 // `--store` は任意のストア配置先。
+// `--background` は重い操作を低優先度・資源監視付きで進める。
 // ============================================================================
 #[derive(Debug, Parser)]
 #[command(
@@ -47,6 +48,13 @@ struct Cli {
     /// Optional store location. Defaults to <tree>/.snapline.
     #[arg(long, global = true, env = "SNAPLINE_STORE")]
     store: Option<PathBuf>,
+
+    /// Run with low priority and resource-aware pacing.
+    #[arg(long, global = true)]
+    background: bool,
+
+    #[command(flatten)]
+    limits: BackgroundLimitsArgs,
 
     #[command(subcommand)]
     command: Command,
@@ -68,8 +76,8 @@ enum Command {
         #[arg(short, long)]
         message: Option<String>,
     },
-    /// List snapshots from oldest to newest.
-    List,
+    /// Show snapshots from oldest to newest.
+    Log,
     /// Restore a snapshot into a new or empty directory.
     Restore {
         #[arg(value_name = "SNAPSHOT_ID")]
@@ -83,30 +91,24 @@ enum Command {
     Config,
     /// Install snapline onto the user PATH so it can be run without a full path.
     Install,
-    /// Run heavy operations with low priority and resource-aware pacing.
-    Background {
-        #[command(flatten)]
-        limits: BackgroundLimitsArgs,
-        #[command(subcommand)]
-        command: BackgroundCommand,
-    },
 }
 
 // ============================================================================
-// バックグラウンド実行の資源しきい値。通常コマンドとは別経路でのみ使う。
+// バックグラウンド実行の資源しきい値。
+// `--background` と一緒に使う。単独では意味を持たない。
 // ============================================================================
 #[derive(Debug, Clone, clap::Args)]
 struct BackgroundLimitsArgs {
-    /// Wait while total CPU usage exceeds this percent (1..=100).
-    #[arg(long, default_value_t = background::DEFAULT_CPU_BUSY_PERCENT)]
+    /// Wait while total CPU usage exceeds this percent (1..=100). Requires --background.
+    #[arg(long, global = true, default_value_t = background::DEFAULT_CPU_BUSY_PERCENT)]
     cpu_busy_percent: u8,
 
-    /// Wait while physical memory load exceeds this percent (1..=100).
-    #[arg(long, default_value_t = background::DEFAULT_MEMORY_LOAD_PERCENT)]
+    /// Wait while physical memory load exceeds this percent (1..=100). Requires --background.
+    #[arg(long, global = true, default_value_t = background::DEFAULT_MEMORY_LOAD_PERCENT)]
     memory_load_percent: u8,
 
-    /// Milliseconds between resource checks while waiting.
-    #[arg(long, default_value = "200")]
+    /// Milliseconds between resource checks while waiting. Requires --background.
+    #[arg(long, global = true, default_value = "200")]
     poll_ms: u64,
 }
 
@@ -121,29 +123,7 @@ impl BackgroundLimitsArgs {
 }
 
 // ============================================================================
-// バックグラウンド経路で実行できる操作。init / list / config は対象外。
-// ============================================================================
-#[derive(Debug, Subcommand)]
-enum BackgroundCommand {
-    /// Capture the current target directory with resource-aware pacing.
-    Snapshot {
-        #[arg(short, long)]
-        message: Option<String>,
-    },
-    /// Restore a snapshot with resource-aware pacing.
-    Restore {
-        #[arg(value_name = "SNAPSHOT_ID")]
-        id: String,
-        #[arg(value_name = "DESTINATION")]
-        destination: PathBuf,
-    },
-    /// Verify the store with resource-aware pacing.
-    Verify,
-}
-
-// ============================================================================
 // 既存ストアを使うコマンドの対象ツリーを決める。
-// 明示された `--tree` を優先し、省略時だけカレントから親方向へ探索する。
 // ============================================================================
 fn resolve_tree(cli: &Cli) -> Result<PathBuf> {
     match &cli.tree {
@@ -154,7 +134,6 @@ fn resolve_tree(cli: &Cli) -> Result<PathBuf> {
 
 // ============================================================================
 // 一覧表示用の短縮 ID を返す。
-// 現行 ID の末尾 UUID 部分を使うため、同日に作った履歴でも短く識別しやすい。
 // ============================================================================
 fn short_snapshot_id(id: &str) -> &str {
     let suffix = id.rsplit_once('-').map_or(id, |(_, suffix)| suffix);
@@ -162,10 +141,54 @@ fn short_snapshot_id(id: &str) -> &str {
 }
 
 // ============================================================================
+// `--background` が使える操作かどうかを検査する。
+// 使えない操作に付けた場合はエラー（無視して続行しない）。
+// ============================================================================
+fn ensure_background_allowed(cli: &Cli) -> Result<()> {
+    if !cli.background {
+        return Ok(());
+    }
+    match cli.command {
+        Command::Snapshot { .. } | Command::Restore { .. } | Command::Verify => Ok(()),
+        Command::Init { .. } | Command::Log | Command::Config | Command::Install => {
+            bail!("--background applies only to snapshot, restore, and verify")
+        }
+    }
+}
+
+// ============================================================================
+// ペース実装を用意する。通常は IdlePace、`--background` 時だけ監視付き。
+// ============================================================================
+enum PreparedPace {
+    Idle(IdlePace),
+    Background(BackgroundPace),
+}
+
+impl PreparedPace {
+    fn as_mut(&mut self) -> &mut dyn IoPace {
+        match self {
+            Self::Idle(pace) => pace,
+            Self::Background(pace) => pace,
+        }
+    }
+}
+
+fn prepare_pace(cli: &Cli) -> Result<PreparedPace> {
+    if cli.background {
+        Ok(PreparedPace::Background(activate(
+            cli.limits.clone().into_limits(),
+        )?))
+    } else {
+        Ok(PreparedPace::Idle(IdlePace))
+    }
+}
+
+// ============================================================================
 // CLI を解釈し、対応する処理へ振り分ける。
 // ============================================================================
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    ensure_background_allowed(&cli)?;
     let store_opt = cli.store.as_deref();
 
     match &cli.command {
@@ -187,7 +210,8 @@ fn main() -> Result<()> {
         Command::Snapshot { message } => {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
-            let outcome = snapshot::create(&store, message.clone())?;
+            let mut pace = prepare_pace(&cli)?;
+            let outcome = snapshot::create_with_pace(&store, message.clone(), pace.as_mut())?;
             let files = outcome
                 .manifest
                 .entries
@@ -199,7 +223,7 @@ fn main() -> Result<()> {
                 outcome.manifest.id, files, outcome.skipped_dirs
             );
         }
-        Command::List => {
+        Command::Log => {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
             for manifest in inspect::list(&store)? {
@@ -215,18 +239,20 @@ fn main() -> Result<()> {
         Command::Restore { id, destination } => {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
-            let count = restore::restore(&store, id, destination)?;
+            let mut pace = prepare_pace(&cli)?;
+            let count = restore::restore_with_pace(&store, id, destination, pace.as_mut())?;
             println!("restored {count} entries to {}", destination.display());
         }
         Command::Verify => {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
+            let mut pace = prepare_pace(&cli)?;
             let progress: Box<dyn io::Write> = if io::stderr().is_terminal() {
                 Box::new(io::stderr())
             } else {
                 Box::new(io::sink())
             };
-            let (snapshots, objects) = inspect::verify(&store, progress)?;
+            let (snapshots, objects) = inspect::verify_with_pace(&store, progress, pace.as_mut())?;
             println!("verified {snapshots} snapshots and {objects} objects");
         }
         Command::Config => {
@@ -248,55 +274,6 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Command::Background { limits, command } => {
-            run_background(&cli, store_opt, limits.clone(), command)?;
-        }
-    }
-
-    Ok(())
-}
-
-// ============================================================================
-// バックグラウンド実行。本体ロジックは既存関数の _with_pace 版を使い、
-// 低優先度と資源監視だけを background モジュールに閉じ込める。
-// ============================================================================
-fn run_background(
-    cli: &Cli,
-    store_opt: Option<&std::path::Path>,
-    limits_args: BackgroundLimitsArgs,
-    command: &BackgroundCommand,
-) -> Result<()> {
-    let mut pace = activate(limits_args.into_limits())?;
-    let tree = resolve_tree(cli)?;
-    let store = Store::open(&tree, store_opt)?;
-
-    match command {
-        BackgroundCommand::Snapshot { message } => {
-            let outcome = snapshot::create_with_pace(&store, message.clone(), &mut pace)?;
-            let files = outcome
-                .manifest
-                .entries
-                .iter()
-                .filter(|entry| entry.kind == model::EntryKind::File)
-                .count();
-            println!(
-                "created {} ({} files, skipped {} dirs)",
-                outcome.manifest.id, files, outcome.skipped_dirs
-            );
-        }
-        BackgroundCommand::Restore { id, destination } => {
-            let count = restore::restore_with_pace(&store, id, destination, &mut pace)?;
-            println!("restored {count} entries to {}", destination.display());
-        }
-        BackgroundCommand::Verify => {
-            let progress: Box<dyn io::Write> = if io::stderr().is_terminal() {
-                Box::new(io::stderr())
-            } else {
-                Box::new(io::sink())
-            };
-            let (snapshots, objects) = inspect::verify_with_pace(&store, progress, &mut pace)?;
-            println!("verified {snapshots} snapshots and {objects} objects");
-        }
     }
 
     Ok(())
@@ -309,11 +286,11 @@ mod tests {
     use super::Cli;
 
     // ============================================================================
-    // list サブコマンドの引数解釈を確認する。
+    // log サブコマンドの引数解釈を確認する。
     // ============================================================================
     #[test]
-    fn parses_tree_and_list_command() {
-        assert!(Cli::try_parse_from(["snapline", "--tree", "workspace", "list"]).is_ok());
+    fn parses_tree_and_log_command() {
+        assert!(Cli::try_parse_from(["snapline", "--tree", "workspace", "log"]).is_ok());
     }
 
     // ============================================================================
@@ -359,10 +336,20 @@ mod tests {
     }
 
     // ============================================================================
-    // background サブコマンドを解釈できることを確認する。
+    // --background を通常コマンドのオプションとして解釈できることを確認する。
     // ============================================================================
     #[test]
-    fn parses_background_snapshot_command() {
-        assert!(Cli::try_parse_from(["snapline", "background", "snapshot", "-m", "idle"]).is_ok());
+    fn parses_background_option_on_snapshot() {
+        assert!(
+            Cli::try_parse_from(["snapline", "--background", "snapshot", "-m", "idle"]).is_ok()
+        );
+    }
+
+    // ============================================================================
+    // 旧 list サブコマンド名は受け付けないことを確認する。
+    // ============================================================================
+    #[test]
+    fn rejects_old_list_command_name() {
+        assert!(Cli::try_parse_from(["snapline", "list"]).is_err());
     }
 }

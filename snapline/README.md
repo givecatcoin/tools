@@ -65,6 +65,7 @@ Snapline の目的は、入れ子 Git を含むツリーを丸ごと保全する
 | --- | --- | --- |
 | `--tree <PATH>` | `SNAPLINE_TREE` | 対象ツリー。省略時はカレントから親方向へ `.snapline` を探す |
 | `--store <PATH>` | `SNAPLINE_STORE` | ストア配置先。省略時は `<tree>/.snapline` |
+| `--background` | （なし） | `snapshot` / `restore` / `verify` を低優先度・資源監視付きで実行 |
 
 `--tree` を省略したときは、カレントディレクトリから親へ順にたどり、
 最初に見つかった `.snapline` のあるフォルダを対象ツリーにします。
@@ -111,10 +112,10 @@ Set-Location C:\work\projectA\src
 snapline snapshot -m "daily"
 ```
 
-### `list` — スナップショット一覧
+### `log` — スナップショット一覧
 
 ```powershell
-snapline --tree C:\work list
+snapline --tree C:\work log
 ```
 
 一覧の先頭には、末尾 UUID 部分から作った 12 文字の短縮 ID が表示されます。
@@ -122,7 +123,7 @@ snapline --tree C:\work list
 ### `restore` — 空の場所へ復元する
 
 ```powershell
-# list に表示された短縮 ID をそのまま指定できる
+# log に表示された短縮 ID をそのまま指定できる
 snapline restore a1b2c3d4e5f6 D:\restored-work
 ```
 
@@ -152,21 +153,22 @@ snapline --tree C:\work config
 
 以降は新しいターミナルで `snapline` を直接呼べます。
 
-### `background` — 低優先度で snapshot / restore / verify
+### `--background` — 低優先度オプション
 
-ゲームやブラウジング中に、表の処理を邪魔しにくく実行する専用経路です。
-通常の `snapshot` / `restore` / `verify` とは**コード経路を分離**しています。
+`snapshot` / `restore` / `verify` に付けて使う。
+ゲームやブラウジング中に、表の処理を邪魔しにくくする。
+ペース（待機）だけが変わり、包含・除外・検証ルールは通常と同じ。
 
 ```powershell
-# 対象ツリー内から。CPU/メモリが空くまで待ちながら記録
-snapline background snapshot -m "while gaming"
+snapline --background snapshot -m "while gaming"
+snapline --background restore a1b2c3d4e5f6 D:\restored-work
+snapline --background verify
 
-# 短縮 ID で復元
-snapline background restore a1b2c3d4e5f6 D:\restored-work
-
-# 整合性チェック
-snapline background verify
+# しきい値を明示する場合
+snapline --background --cpu-busy-percent 60 snapshot
 ```
+
+`init` / `log` / `config` / `install` に `--background` を付けるとエラーになる（無視して続行しない）。
 
 しきい値（省略時は既定値）:
 
@@ -180,7 +182,6 @@ snapline background verify
 
 - プロセスを Windows のバックグラウンド優先度へ下げる（失敗したらエラーで止まる）
 - CPU / メモリを定期的に監視し、空くまで待ってから I/O を進める
-- **包含・除外・検証のルールは通常コマンドと同一**（ファイルを飛ばしたり検証を緩めたりしない）
 - 監視や優先度変更に失敗した場合、黙って通常優先度で続行することはしない
 
 ## `.snaplinenore`（gitignore 互換の除外）
@@ -261,6 +262,18 @@ C:\stores\work\
 ## モジュール関係
 
 ソース構成と依存の向きは [docs/modules.md](docs/modules.md) を参照してください。
+
+## テスト
+
+試験項目と合否基準は [docs/test-spec.md](docs/test-spec.md) を参照してください。
+E2E は次で実行できます。
+
+```powershell
+cargo build --release
+cargo test
+cargo clippy -- -D warnings
+.\docs\run_e2e_tests.ps1
+```
 
 ## ビルド
 

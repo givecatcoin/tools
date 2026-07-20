@@ -41,7 +41,9 @@ pub struct SnapshotOutcome {
 
 // ============================================================================
 // 対象ツリーを走査し、設定に従い除外したうえでスナップショットを作る。
+// CLI は create_with_pace を直接呼ぶ。本関数はテストと薄いラッパ用。
 // ============================================================================
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn create(store: &Store, message: Option<String>) -> Result<SnapshotOutcome> {
     create_with_pace(store, message, &mut crate::pace::IdlePace)
 }

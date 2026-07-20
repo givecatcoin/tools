@@ -42,7 +42,9 @@ pub fn list(store: &Store) -> Result<Vec<SnapshotManifest>> {
 // ============================================================================
 // 全マニフェストと参照オブジェクトを検証する。
 // 戻り値は (スナップショット数, ユニークオブジェクト数)。
+// CLI は verify_with_pace を直接呼ぶ。本関数は薄いラッパ用。
 // ============================================================================
+#[allow(dead_code)]
 pub fn verify(store: &Store, progress: impl Write) -> Result<(usize, usize)> {
     verify_with_pace(store, progress, &mut crate::pace::IdlePace)
 }

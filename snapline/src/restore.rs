@@ -23,7 +23,9 @@ use crate::{
 
 // ============================================================================
 // 指定スナップショットを destination へ復元し、エントリ数を返す。
+// CLI は restore_with_pace を直接呼ぶ。本関数は薄いラッパ用。
 // ============================================================================
+#[allow(dead_code)]
 pub fn restore(store: &Store, id: &str, destination: &Path) -> Result<usize> {
     restore_with_pace(store, id, destination, &mut crate::pace::IdlePace)
 }
