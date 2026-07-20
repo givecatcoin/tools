@@ -1,0 +1,24 @@
+[package]
+name = "snapline"
+version = "0.1.0"
+edition = "2024"
+description = "A safe, content-addressed snapshot store for directories"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+filetime = "0.2"
+ignore = { version = "0.4.30", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"
+zstd = "0.13.3"
+
+[profile.release]
+lto = true
+strip = true

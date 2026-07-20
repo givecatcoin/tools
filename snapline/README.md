@@ -1,0 +1,280 @@
+# Snapline
+
+Snapline は、ディレクトリツリー全体を扱うローカル向けの内容アドレス型履歴ストアです。
+目的は「確実な履歴バックアップ」です。推測による除外や、Git の入れ子リポジトリ向けの特別扱いは意図的に持たせません。
+
+通常ファイル、ディレクトリ、空ディレクトリ、シンボリックリンク、更新日時、読み取り専用フラグを
+記録します。同一内容は 1 回だけ保存し、効く場合だけ Zstandard 圧縮します。
+
+## スナップショットの包含・除外（重要）
+
+Snapline の snapshot は、**明示された除外以外を落とさない**ことを方針とします。
+「たぶん不要だろう」という推測除外は行いません。確実な履歴バックアップのためです。
+
+### 除外されるもの（明示されたもののみ）
+
+| 除外元 | 対象 | 備考 |
+| --- | --- | --- |
+| 今開いているストア本体 | `store.root` とパスが一致するエントリ | 親ツリー直下の `.snapline`、または外部配置のストア本体 |
+| `settings.exclude_dir_names` | その**名前のディレクトリ** | ファイル名は対象外。ツリー内のどこにあっても名前一致で除外 |
+| `settings.exclude_file_names` | その**名前のファイル** | ディレクトリには適用しない。既定は空 |
+| `settings.exclude_extensions` | その**拡張子のファイル** | `.log` と `log` は同じ。末尾拡張子のみ。既定は空 |
+| 各階層の `.snaplinenore` | ルールに一致するパス | `.gitignore` 互換記法。親と子のルールを重ねて判定 |
+
+これら以外の通常ファイル・ディレクトリは記録対象です。
+
+### 含まれない／特別扱いしないもの（よくある誤解）
+
+| 項目 | 挙動 |
+| --- | --- |
+| `.gitignore` | **見ない。** |
+| 子階層の `.snapline` | **除外しない。中身ごと親スナップショットに入る** |
+| 入れ子の Git リポジトリ | 特別扱いしない。`.git` は既定で保護して含める |
+| シンボリックリンク先のツリー | 辿らない。リンク自体は記録する |
+
+例:
+
+```text
+C:\work\.snapline          ← 今使っているストア（除外）
+C:\work\app\.snapline      ← 子ストア（除外しない。全部入る）
+C:\work\app\src\main.rs    ← 入る
+```
+
+`C:\work` で `snapline snapshot` すると、子の `app\.snapline` も履歴に含まれます。
+入れ子ストアを外したい場合だけ、`.snaplinenore` や `exclude_dir_names` で明示してください。
+
+### 記録対象だが「全部の中身」ではないもの
+
+| 項目 | 挙動 |
+| --- | --- |
+| シンボリックリンク | リンクパスとリンク先文字列を記録。リンク先配下は辿らない |
+| 読み取り失敗 | 黙ってスキップしない。スナップショット全体を中断する |
+| 非対応の特殊エントリ | ファイル／ディレクトリ／シンボリックリンク以外はエラーで中断 |
+| 読み取り中に内容が変化したファイル | 中断する（壊れた履歴を残さない） |
+
+### `protect_git` について
+
+既定 `true` です。`.git` は `exclude_dir_names` や `.snaplinenore` に書いても落としません。
+Snapline の目的は、入れ子 Git を含むツリーを丸ごと保全することだからです。
+
+## コマンド一覧と使い方
+
+共通オプション:
+
+| オプション | 環境変数 | 意味 |
+| --- | --- | --- |
+| `--tree <PATH>` | `SNAPLINE_TREE` | 対象ツリー。省略時はカレントから親方向へ `.snapline` を探す |
+| `--store <PATH>` | `SNAPLINE_STORE` | ストア配置先。省略時は `<tree>/.snapline` |
+
+`--tree` を省略したときは、カレントディレクトリから親へ順にたどり、
+最初に見つかった `.snapline` のあるフォルダを対象ツリーにします。
+そのため、対象ツリー内のサブフォルダからも各コマンドを実行できます。
+
+### 初回セットアップ（PATH 登録）
+
+`git commit` のように、実行ファイルの場所を書かずに使うには、一度だけインストールします。
+
+```powershell
+cargo build --release
+.\target\release\snapline.exe install
+```
+
+`%LOCALAPPDATA%\Snapline\bin` へコピーし、ユーザー PATH に登録します。
+**新しいターミナル**を開いたあと:
+
+```powershell
+snapline --help
+```
+
+### `init` — 履歴ストアを作成する
+
+```powershell
+# 対象ツリー直下に .snapline を作る
+snapline init C:\work
+
+# カレントが対象ツリーのとき
+snapline init
+
+# 直下以外へ .snapline を置く（C:\stores\work\.snapline が本体）
+# ツリー側にはポインタファイル C:\work\.snapline が残る
+snapline --tree C:\work --store C:\stores\work init
+```
+
+### `snapshot` — 現在のツリーを記録する
+
+```powershell
+snapline --tree C:\work snapshot
+snapline --tree C:\work snapshot -m "Before migration"
+
+# 対象ツリー内のサブフォルダでも --tree を省略できる
+Set-Location C:\work\projectA\src
+snapline snapshot -m "daily"
+```
+
+### `list` — スナップショット一覧
+
+```powershell
+snapline --tree C:\work list
+```
+
+一覧の先頭には、末尾 UUID 部分から作った 12 文字の短縮 ID が表示されます。
+
+### `restore` — 空の場所へ復元する
+
+```powershell
+# list に表示された短縮 ID をそのまま指定できる
+snapline restore a1b2c3d4e5f6 D:\restored-work
+```
+
+完全 ID、完全 ID の先頭、UUID 部分の先頭のいずれでも指定できます。
+短縮 ID は 4 文字以上必要で、複数の履歴に一致する場合は安全のため拒否します。
+復元先は新規または空ディレクトリのみです。既存ツリーは上書きしません。
+
+### `verify` — 履歴の整合性を確認する
+
+```powershell
+snapline --tree C:\work verify
+```
+
+### `config` — 現在の設定を表示する
+
+```powershell
+snapline --tree C:\work config
+```
+
+設定の変更は `.snapline/config.json`（外部配置時はストア本体側）を編集します。
+
+### `install` — PATH に登録する
+
+```powershell
+.\target\release\snapline.exe install
+```
+
+以降は新しいターミナルで `snapline` を直接呼べます。
+
+### `background` — 低優先度で snapshot / restore / verify
+
+ゲームやブラウジング中に、表の処理を邪魔しにくく実行する専用経路です。
+通常の `snapshot` / `restore` / `verify` とは**コード経路を分離**しています。
+
+```powershell
+# 対象ツリー内から。CPU/メモリが空くまで待ちながら記録
+snapline background snapshot -m "while gaming"
+
+# 短縮 ID で復元
+snapline background restore a1b2c3d4e5f6 D:\restored-work
+
+# 整合性チェック
+snapline background verify
+```
+
+しきい値（省略時は既定値）:
+
+| オプション | 既定 | 意味 |
+| --- | --- | --- |
+| `--cpu-busy-percent` | `70` | 全体 CPU 使用率がこれを超えたら待機 |
+| `--memory-load-percent` | `90` | 物理メモリ使用率がこれを超えたら待機 |
+| `--poll-ms` | `200` | 待機中の再確認間隔（ミリ秒） |
+
+動作:
+
+- プロセスを Windows のバックグラウンド優先度へ下げる（失敗したらエラーで止まる）
+- CPU / メモリを定期的に監視し、空くまで待ってから I/O を進める
+- **包含・除外・検証のルールは通常コマンドと同一**（ファイルを飛ばしたり検証を緩めたりしない）
+- 監視や優先度変更に失敗した場合、黙って通常優先度で続行することはしない
+
+## `.snaplinenore`（gitignore 互換の除外）
+
+`.gitignore` には追従しません。代わりに Snapline 専用の `.snaplinenore` を使います。
+詳細な包含方針は「スナップショットの包含・除外（重要）」を参照してください。
+
+- 記法は `.gitignore` と同じ
+- ツリー内の**すべての階層**にある `.snaplinenore` が有効
+- 親のルールと子のルールを重ねて判定する（子の否定パターン `!` も有効）
+- `exclude_dir_names` のディレクトリ名除外も並行して効く
+- `protect_git` が有効なとき、`.git` は `.snaplinenore` でも除外されない
+
+例:
+
+```text
+# C:\work\.snaplinenore
+*.log
+*.tmp
+
+# C:\work\app\.snaplinenore
+cache/
+build/
+```
+
+## ストア配置
+
+### 既定（ツリー直下）
+
+```text
+C:\work\
+  .snapline\          ← ストア本体
+    config.json
+    objects\
+    snapshots\
+    tmp\
+  projectA\
+  projectB\
+```
+
+### 外部配置（`--store`）
+
+```text
+C:\work\
+  .snapline           ← ポインタファイル（本体場所を指す）
+  projectA\
+
+C:\stores\work\
+  .snapline\          ← ストア本体
+    config.json
+    objects\
+    snapshots\
+    tmp\
+```
+
+`--store C:\stores\work` と書くと `C:\stores\work\.snapline` が作られます。  
+すでに `.snapline` で終わるパスを渡せば、そのパス自体がストア本体になります。
+
+除外されるのは**今開いているストア本体だけ**です。
+子階層にある別の `.snapline` は自動除外されません（包含・除外の節を参照）。
+
+## ユーザー設定（config.json）
+
+| 項目 | 既定 | 意味 |
+| --- | --- | --- |
+| `settings.exclude_dir_names` | 再生成可能な依存・キャッシュ名 | その名前のディレクトリをツリー全体で除外 |
+| `settings.exclude_file_names` | `[]` | その名前のファイルをツリー全体で除外 |
+| `settings.exclude_extensions` | `[]` | その拡張子のファイルをツリー全体で除外（`.log` / `log` は同じ） |
+| `settings.protect_git` | `true` | `.git` を除外リストや `.snaplinenore` でも落とさない |
+
+設定の保存場所は `.snapline/config.json`（外部配置時はストア本体側）です。
+変更は次の `snapshot` から反映されます。専用の設定変更コマンドはまだありません。
+
+`.gitignore` を除外条件に使わない理由:  
+「共有しないもの」と「履歴に残さないもの」は別だからです。`.env` などを誤って落とす危険を避けます。
+確実な履歴バックアップのため、除外は明示指定に限定します。
+
+## モジュール関係
+
+ソース構成と依存の向きは [docs/modules.md](docs/modules.md) を参照してください。
+
+## ビルド
+
+```powershell
+cargo build --release
+```
+
+実行ファイル: `target\release\snapline.exe`
+
+## 現時点の制限
+
+- 既存ツリーの上書きや削除を伴う復元はしない
+- ACL、代替データストリームなど、プラットフォーム固有のメタデータは記録しない
+- Windows でのシンボリックリンク作成には、Developer Mode や昇格権限が必要な場合がある
+- ファイル名とシンボリックリンク先は Unicode で表現できる必要がある
+- 読み取り中にファイルが変化した場合、スナップショット作成は中断する
+- 設定変更用の専用サブコマンドはまだなく、`config.json` の直接編集が必要
