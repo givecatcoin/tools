@@ -1,2 +1,1 @@
-# Tool
-  A collection of tools.
+A collection of tools.
