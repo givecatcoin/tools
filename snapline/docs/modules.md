@@ -51,6 +51,7 @@ flowchart TB
 | モジュール | 流れ上の位置 | 役割 |
 | --- | --- | --- |
 | `main` | 1 | CLI 解釈と振り分け |
+| `progress` | 1→3 | Git 風の進捗表示（stderr、TTY のみ） |
 | `pace` | 2 | I/O 待機の共通口 |
 | `background` | 2（任意） | `BackgroundPace` の実装 |
 | `snapshot` | 3 | 記録 |

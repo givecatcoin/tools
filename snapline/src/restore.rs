@@ -18,6 +18,7 @@ use crate::{
     model::{Entry, EntryKind, FORMAT_VERSION, SnapshotManifest},
     object,
     pace::IoPace,
+    progress::Progress,
     store::Store,
 };
 
@@ -27,7 +28,13 @@ use crate::{
 // ============================================================================
 #[allow(dead_code)]
 pub fn restore(store: &Store, id: &str, destination: &Path) -> Result<usize> {
-    restore_with_pace(store, id, destination, &mut crate::pace::IdlePace)
+    restore_with_pace(
+        store,
+        id,
+        destination,
+        &mut crate::pace::IdlePace,
+        &mut Progress::quiet(),
+    )
 }
 
 // ============================================================================
@@ -38,26 +45,54 @@ pub fn restore_with_pace(
     id: &str,
     destination: &Path,
     pace: &mut dyn IoPace,
+    progress: &mut Progress,
 ) -> Result<usize> {
     let manifest = store.read_manifest(id)?;
     validate_manifest(&manifest)?;
     prepare_destination(destination)?;
 
-    for entry in entries_of_kind(&manifest, EntryKind::Directory) {
+    let dir_entries: Vec<_> = entries_of_kind(&manifest, EntryKind::Directory).collect();
+    let file_entries: Vec<_> = entries_of_kind(&manifest, EntryKind::File).collect();
+    let symlink_entries: Vec<_> = entries_of_kind(&manifest, EntryKind::Symlink).collect();
+    let total_entries = manifest.entries.len();
+
+    progress.begin("Creating directories");
+    for (index, entry) in dir_entries.iter().enumerate() {
         fs::create_dir_all(destination.join(&entry.path))?;
+        progress.ratio(index + 1, dir_entries.len());
     }
-    for entry in entries_of_kind(&manifest, EntryKind::File) {
+    if dir_entries.is_empty() {
+        progress.done("0 directories, done.");
+    }
+
+    progress.begin("Restoring files");
+    for (index, entry) in file_entries.iter().enumerate() {
         restore_file(store, destination, entry, pace)?;
+        progress.ratio(index + 1, file_entries.len());
     }
-    for entry in entries_of_kind(&manifest, EntryKind::Symlink) {
+    if file_entries.is_empty() {
+        progress.done("0 files, done.");
+    }
+
+    progress.begin("Restoring symlinks");
+    for (index, entry) in symlink_entries.iter().enumerate() {
         restore_symlink(destination, entry)?;
+        progress.ratio(index + 1, symlink_entries.len());
+    }
+    if symlink_entries.is_empty() {
+        progress.done("0 symlinks, done.");
     }
 
-    for entry in manifest.entries.iter().rev() {
+    progress.begin("Applying metadata");
+    for (index, entry) in manifest.entries.iter().rev().enumerate() {
         apply_metadata(&destination.join(&entry.path), entry)?;
+        progress.ratio(index + 1, total_entries);
+    }
+    if total_entries == 0 {
+        progress.done("0 entries, done.");
     }
 
-    Ok(manifest.entries.len())
+    Ok(total_entries)
 }
 
 // ============================================================================

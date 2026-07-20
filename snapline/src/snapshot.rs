@@ -25,6 +25,7 @@ use crate::{
     model::{Entry, EntryKind, FORMAT_VERSION, SnapshotManifest},
     object,
     pace::IoPace,
+    progress::Progress,
     snaplinenore::SnaplinenoreMatcher,
     store::Store,
 };
@@ -45,7 +46,12 @@ pub struct SnapshotOutcome {
 // ============================================================================
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn create(store: &Store, message: Option<String>) -> Result<SnapshotOutcome> {
-    create_with_pace(store, message, &mut crate::pace::IdlePace)
+    create_with_pace(
+        store,
+        message,
+        &mut crate::pace::IdlePace,
+        &mut Progress::quiet(),
+    )
 }
 
 // ============================================================================
@@ -55,6 +61,7 @@ pub fn create_with_pace(
     store: &Store,
     message: Option<String>,
     pace: &mut dyn IoPace,
+    progress: &mut Progress,
 ) -> Result<SnapshotOutcome> {
     let _lock = store.lock()?;
     if !store.config.target.is_dir() {
@@ -72,6 +79,10 @@ pub fn create_with_pace(
         settings.clone(),
     ));
     let walk_error: RefCell<Option<anyhow::Error>> = RefCell::new(None);
+    let mut entry_count = 0_usize;
+    let mut file_count = 0_usize;
+
+    progress.begin("Scanning files");
 
     // filter_entry(false) はその枝全体を降りない。
     // シンボリックリンクは追わない（リンク先ツリーを意図せず取り込みたくない）。
@@ -168,6 +179,15 @@ pub fn create_with_pace(
             bail!("unsupported filesystem entry: {}", path.display());
         };
 
+        if matches!(kind, EntryKind::File) {
+            file_count += 1;
+        }
+        entry_count += 1;
+        progress.count(
+            entry_count,
+            &format!("entries ({file_count} files)"),
+        );
+
         entries.push(Entry {
             path: relative,
             kind,
@@ -184,6 +204,10 @@ pub fn create_with_pace(
         return Err(error);
     }
 
+    progress.done(&format!("{entry_count} entries ({file_count} files), done."));
+
+    progress.begin("Writing snapshot");
+
     let manifest = SnapshotManifest {
         format_version: FORMAT_VERSION,
         id: format!(
@@ -196,6 +220,7 @@ pub fn create_with_pace(
         entries,
     };
     store.write_manifest(&manifest)?;
+    progress.done("done.");
 
     Ok(SnapshotOutcome {
         manifest,

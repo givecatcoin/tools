@@ -3,11 +3,7 @@
 //! 書き込み系（snapshot）とは切り離し、読み取り専用の観測操作をまとめる。
 //! ============================================================================
 
-use std::{
-    collections::HashMap,
-    fs,
-    io::{self, Write},
-};
+use std::{collections::HashMap, fs};
 
 use anyhow::{Context, Result, bail};
 
@@ -15,6 +11,7 @@ use crate::{
     model::{EntryKind, SnapshotManifest},
     object,
     pace::IoPace,
+    progress::Progress,
     restore::validate_manifest,
     store::{Store, read_json},
 };
@@ -45,7 +42,7 @@ pub fn list(store: &Store) -> Result<Vec<SnapshotManifest>> {
 // CLI は verify_with_pace を直接呼ぶ。本関数は薄いラッパ用。
 // ============================================================================
 #[allow(dead_code)]
-pub fn verify(store: &Store, progress: impl Write) -> Result<(usize, usize)> {
+pub fn verify(store: &Store, progress: &mut Progress) -> Result<(usize, usize)> {
     verify_with_pace(store, progress, &mut crate::pace::IdlePace)
 }
 
@@ -54,7 +51,7 @@ pub fn verify(store: &Store, progress: impl Write) -> Result<(usize, usize)> {
 // ============================================================================
 pub fn verify_with_pace(
     store: &Store,
-    mut progress: impl Write,
+    progress: &mut Progress,
     pace: &mut dyn IoPace,
 ) -> Result<(usize, usize)> {
     let manifests = list(store)?;
@@ -63,6 +60,7 @@ pub fn verify_with_pace(
     // ただし「同じハッシュなのにサイズが違う」は壊れているので拒否する。
     let mut objects = HashMap::new();
 
+    progress.begin("Checking snapshots");
     for manifest in &manifests {
         validate_manifest(manifest)
             .with_context(|| format!("invalid snapshot manifest: {}", manifest.id))?;
@@ -77,14 +75,19 @@ pub fn verify_with_pace(
             }
         }
     }
+    progress.done(&format!("{} snapshots, done.", manifests.len()));
+
+    let object_total = objects.len();
+    progress.begin("Verifying objects");
 
     // 実体は展開しながらハッシュ照合する。圧縮破損もここで検知できる。
     for (index, (expected_hash, expected_size)) in objects.iter().enumerate() {
         pace.before_entry()?;
-        object::copy_verified_with_pace(store, expected_hash, *expected_size, io::sink(), pace)?;
-        if (index + 1) % 100 == 0 {
-            writeln!(progress, "verified {} objects", index + 1)?;
-        }
+        object::copy_verified_with_pace(store, expected_hash, *expected_size, std::io::sink(), pace)?;
+        progress.ratio(index + 1, object_total);
+    }
+    if object_total == 0 {
+        progress.done("0 objects, done.");
     }
 
     Ok((manifests.len(), objects.len()))

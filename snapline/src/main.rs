@@ -8,6 +8,7 @@ mod install;
 mod model;
 mod object;
 mod pace;
+mod progress;
 mod restore;
 mod settings;
 mod snaplinenore;
@@ -15,7 +16,6 @@ mod snapshot;
 mod store;
 
 use std::{
-    io::{self, IsTerminal},
     path::PathBuf,
     time::Duration,
 };
@@ -26,6 +26,7 @@ use clap::{Parser, Subcommand};
 use crate::{
     background::{BackgroundLimits, BackgroundPace, activate},
     pace::{IdlePace, IoPace},
+    progress::Progress,
     store::Store,
 };
 
@@ -211,7 +212,9 @@ fn main() -> Result<()> {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
             let mut pace = prepare_pace(&cli)?;
-            let outcome = snapshot::create_with_pace(&store, message.clone(), pace.as_mut())?;
+            let mut progress = Progress::stderr_if_tty();
+            let outcome =
+                snapshot::create_with_pace(&store, message.clone(), pace.as_mut(), &mut progress)?;
             let files = outcome
                 .manifest
                 .entries
@@ -240,19 +243,23 @@ fn main() -> Result<()> {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
             let mut pace = prepare_pace(&cli)?;
-            let count = restore::restore_with_pace(&store, id, destination, pace.as_mut())?;
+            let mut progress = Progress::stderr_if_tty();
+            let count = restore::restore_with_pace(
+                &store,
+                id,
+                destination,
+                pace.as_mut(),
+                &mut progress,
+            )?;
             println!("restored {count} entries to {}", destination.display());
         }
         Command::Verify => {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
             let mut pace = prepare_pace(&cli)?;
-            let progress: Box<dyn io::Write> = if io::stderr().is_terminal() {
-                Box::new(io::stderr())
-            } else {
-                Box::new(io::sink())
-            };
-            let (snapshots, objects) = inspect::verify_with_pace(&store, progress, pace.as_mut())?;
+            let mut progress = Progress::stderr_if_tty();
+            let (snapshots, objects) =
+                inspect::verify_with_pace(&store, &mut progress, pace.as_mut())?;
             println!("verified {snapshots} snapshots and {objects} objects");
         }
         Command::Config => {
