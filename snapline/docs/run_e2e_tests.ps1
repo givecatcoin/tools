@@ -17,12 +17,35 @@ function Fail([string]$id, [string]$detail) {
     Write-Host "FAIL $id  $detail"
     throw "E2E failed: $id"
 }
+function Invoke-Snapline {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$CliArgs)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $exe @CliArgs 2>&1 | Out-Null
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+function Invoke-SnaplineOutput {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$CliArgs)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & $exe @CliArgs 2>&1
+        $global:LASTEXITCODE = $LASTEXITCODE
+        return $output
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
 function Invoke-SnaplineExpectFail {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$CliArgs)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        & $exe @CliArgs 2>$null | Out-Null
+        & $exe @CliArgs 2>&1 | Out-Null
         return $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $prev
@@ -33,7 +56,7 @@ try {
     # --- I-01 init ---
     $tree = Join-Path $root "tree"
     New-Item -ItemType Directory -Path $tree | Out-Null
-    & $exe init $tree | Out-Null
+    if ((Invoke-Snapline init $tree) -ne 0) { Fail "I-01" "init failed" }
     if (-not (Test-Path (Join-Path $tree ".snapline\config.json"))) {
         Fail "I-01" "config.json missing"
     }
@@ -70,15 +93,14 @@ try {
     Set-Content -Path (Join-Path $tree "keep.txt") -Value "keep" -NoNewline
 
     # --- I-02 snapshot / log / restore ---
-    & $exe --tree $tree snapshot -m "e2e-main" | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "I-02" "snapshot failed" }
-    $logLines = & $exe --tree $tree log
+    if ((Invoke-Snapline --tree $tree snapshot -m "e2e-main") -ne 0) { Fail "I-02" "snapshot failed" }
+    $logLines = @(Invoke-SnaplineOutput --tree $tree log | Where-Object { $_ -match "\sentries\s" })
     if ($LASTEXITCODE -ne 0) { Fail "I-02" "log failed" }
+    if ($logLines.Count -lt 1) { Fail "I-02" "no log rows" }
     $shortId = (($logLines | Select-Object -Last 1) -split '\s+')[0]
-    if ($shortId.Length -ne 12) { Fail "I-02" "short id length=$($shortId.Length)" }
+    if ($shortId.Length -ne 12) { Fail "I-02" "short id length=$($shortId.Length) line=$($logLines | Select-Object -Last 1)" }
     $restored = Join-Path $root "restored-main"
-    & $exe --tree $tree restore $shortId $restored | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "I-02" "restore failed" }
+    if ((Invoke-Snapline --tree $tree restore $shortId $restored) -ne 0) { Fail "I-02" "restore failed" }
     $got = Get-Content -Raw (Join-Path $restored "project\src\hello.txt")
     if ($got -ne "hello-snapline") { Fail "I-02" "content mismatch: $got" }
     Pass "I-02" "snapshot/log/restore ok shortId=$shortId"
@@ -107,7 +129,7 @@ try {
     # --- I-03 nested cwd discovery ---
     Push-Location $nested
     try {
-        $fromNested = & $exe log
+        $fromNested = Invoke-SnaplineOutput log
         if ($LASTEXITCODE -ne 0) { Fail "I-03" "log from nested dir failed" }
         if (-not ($fromNested -match $shortId)) { Fail "I-03" "expected snapshot missing" }
         Pass "I-03" "discovered store from subdirectory"
@@ -122,12 +144,11 @@ try {
     $config.settings.exclude_extensions = @(".log")
     $json = $config | ConvertTo-Json -Depth 8
     [System.IO.File]::WriteAllText($configPath, $json)
-    & $exe --tree $tree snapshot -m "e2e-exclude" | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "I-07" "snapshot after exclude config failed" }
-    $log2 = & $exe --tree $tree log
+    if ((Invoke-Snapline --tree $tree snapshot -m "e2e-exclude") -ne 0) { Fail "I-07" "snapshot after exclude config failed" }
+    $log2 = Invoke-SnaplineOutput --tree $tree log
     $short2 = (($log2 | Select-Object -Last 1) -split '\s+')[0]
     $restored2 = Join-Path $root "restored-exclude"
-    & $exe --tree $tree restore $short2 $restored2 | Out-Null
+    if ((Invoke-Snapline --tree $tree restore $short2 $restored2) -ne 0) { Fail "I-07" "restore after exclude failed" }
     if (Test-Path (Join-Path $restored2 "Thumbs.db")) { Fail "I-07" "Thumbs.db was restored" }
     if (Test-Path (Join-Path $restored2 "noise.log")) { Fail "I-07" "noise.log was restored" }
     if (-not (Test-Path (Join-Path $restored2 "keep.txt"))) { Fail "I-07" "keep.txt missing" }
@@ -138,17 +159,14 @@ try {
     $extStoreParent = Join-Path $root "ext-store-parent"
     New-Item -ItemType Directory -Path $extTree, $extStoreParent | Out-Null
     Set-Content -Path (Join-Path $extTree "a.txt") -Value "external" -NoNewline
-    & $exe --tree $extTree --store $extStoreParent init | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "I-08" "external init failed" }
+    if ((Invoke-Snapline --tree $extTree --store $extStoreParent init) -ne 0) { Fail "I-08" "external init failed" }
     $marker = Join-Path $extTree ".snapline"
     if ((Get-Item $marker).PSIsContainer) { Fail "I-08" "tree marker should be pointer file" }
     if (-not (Test-Path (Join-Path $extStoreParent ".snapline\config.json"))) {
         Fail "I-08" "external store body missing"
     }
-    & $exe --tree $extTree snapshot -m "ext" | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "I-08" "external snapshot failed" }
-    & $exe --tree $extTree log | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "I-08" "external log failed" }
+    if ((Invoke-Snapline --tree $extTree snapshot -m "ext") -ne 0) { Fail "I-08" "external snapshot failed" }
+    if ((Invoke-Snapline --tree $extTree log) -ne 0) { Fail "I-08" "external log failed" }
     Pass "I-08" "external store with pointer works"
 
     # --- I-09 non-empty restore destination ---
@@ -165,22 +183,83 @@ try {
     Pass "I-10" "missing short id rejected"
 
     # --- I-11 verify ---
-    $verifyOut = & $exe --tree $tree verify
+    $verifyOut = Invoke-SnaplineOutput --tree $tree verify
     if ($LASTEXITCODE -ne 0) { Fail "I-11" "verify failed" }
     if (-not ($verifyOut -match "verified")) { Fail "I-11" "unexpected verify output: $verifyOut" }
     Pass "I-11" "$verifyOut"
 
     # --- I-12 --background both positions ---
-    & $exe --tree $tree --background snapshot -m "bg-before" | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "I-12" "--background before snapshot failed" }
-    & $exe --tree $tree snapshot --background -m "bg-after" | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "I-12" "snapshot --background failed" }
+    if ((Invoke-Snapline --tree $tree --background snapshot -m "bg-before") -ne 0) { Fail "I-12" "--background before snapshot failed" }
+    if ((Invoke-Snapline --tree $tree snapshot --background -m "bg-after") -ne 0) { Fail "I-12" "snapshot --background failed" }
     Pass "I-12" "both --background positions work"
 
     # --- I-13 --background on log ---
     $code = Invoke-SnaplineExpectFail --tree $tree --background log
     if ($code -eq 0) { Fail "I-13" "--background log succeeded" }
     Pass "I-13" "--background log rejected"
+
+    # --- I-16 background verify ---
+    if ((Invoke-Snapline --tree $tree --background verify) -ne 0) { Fail "I-16" "--background verify failed" }
+    Pass "I-16" "--background verify ok"
+
+    # --- I-17 background restore ---
+    $bgRestore = Join-Path $root "restored-background"
+    if ((Invoke-Snapline --tree $tree --background restore $shortId $bgRestore) -ne 0) { Fail "I-17" "--background restore failed" }
+    if (-not (Test-Path (Join-Path $bgRestore "project\src\hello.txt"))) {
+        Fail "I-17" "background restore missing content"
+    }
+    Pass "I-17" "--background restore ok"
+
+    # --- I-18 background snapshot under CPU load (high threshold) ---
+    $cpuJob = Start-Job -ScriptBlock {
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        while ($sw.Elapsed.TotalSeconds -lt 20) {
+            [void](1..5000 | ForEach-Object { $_ * $_ })
+        }
+    }
+    try {
+        if ((Invoke-Snapline --tree $tree --background --cpu-busy-percent 99 snapshot -m "bg-under-load") -ne 0) {
+            Fail "I-18" "--background snapshot under load failed"
+        }
+        Pass "I-18" "--background snapshot under CPU load ok"
+    } finally {
+        Stop-Job $cpuJob -ErrorAction SilentlyContinue | Out-Null
+        Remove-Job $cpuJob -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+
+    # --- I-19 summary sidecar written on snapshot ---
+    $snapDir = Join-Path $tree ".snapline\snapshots"
+    $sumDir = Join-Path $tree ".snapline\summaries"
+    $manifestFiles = @(Get-ChildItem -Path $snapDir -Filter "*.json" -File)
+    if ($manifestFiles.Count -lt 1) { Fail "I-19" "no manifests found" }
+    foreach ($mf in $manifestFiles) {
+        $summaryPath = Join-Path $sumDir $mf.Name
+        if (-not (Test-Path $summaryPath)) { Fail "I-19" "missing summary for $($mf.Name)" }
+        $summary = Get-Content -Raw $summaryPath | ConvertFrom-Json
+        if ($null -eq $summary.entry_count) { Fail "I-19" "entry_count missing in $($mf.Name)" }
+    }
+    Pass "I-19" "summaries present for $($manifestFiles.Count) snapshots"
+
+    # --- I-20 migrate missing summaries + log -1 ---
+    Remove-Item -Recurse -Force $sumDir
+    $migrateLog = Invoke-SnaplineOutput --tree $tree log
+    if ($LASTEXITCODE -ne 0) { Fail "I-20" "log after summary delete failed" }
+    if (-not (Test-Path $sumDir)) { Fail "I-20" "summaries dir not recreated" }
+    $rebuilt = @(Get-ChildItem -Path $sumDir -Filter "*.json" -File)
+    if ($rebuilt.Count -ne $manifestFiles.Count) {
+        Fail "I-20" "summary count=$($rebuilt.Count) expected=$($manifestFiles.Count)"
+    }
+    if ((Invoke-Snapline --tree $tree snapshot -m "for-log-minus-one") -ne 0) {
+        Fail "I-20" "extra snapshot for log -1 failed"
+    }
+    $onlyLatest = @(Invoke-SnaplineOutput --tree $tree log -1)
+    if ($LASTEXITCODE -ne 0) { Fail "I-20" "log -1 failed" }
+    $latestLines = @($onlyLatest | Where-Object { $_ -match "entries" })
+    if ($latestLines.Count -ne 1) { Fail "I-20" "log -1 returned $($latestLines.Count) lines" }
+    if (-not ($latestLines[0] -match "for-log-minus-one")) {
+        Fail "I-20" "log -1 did not show newest message: $($latestLines[0])"
+    }
+    Pass "I-20" "summary migration and log -1 ok"
 
     Write-Host ""
     Write-Host "All E2E cases passed ($($results.Count))"

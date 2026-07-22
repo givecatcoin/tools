@@ -51,7 +51,7 @@ flowchart TB
 | モジュール | 流れ上の位置 | 役割 |
 | --- | --- | --- |
 | `main` | 1 | CLI 解釈と振り分け |
-| `progress` | 1→3 | Git 風の進捗表示（stderr、TTY のみ） |
+| `progress` | 1→3 | 進捗は stderr、結果は stdout。区切りに空行 |
 | `pace` | 2 | I/O 待機の共通口 |
 | `background` | 2（任意） | `BackgroundPace` の実装 |
 | `snapshot` | 3 | 記録 |
@@ -86,7 +86,7 @@ main
 | コマンド | 経路 |
 | --- | --- |
 | `init` / `config` | `main` → `store` |
-| `log` | `main` → `inspect::list` → `store` |
+| `log` | `main` → `inspect::list_log_rows`（欠落要約は自動補完）→ `store` |
 | `snapshot` | `main` → IdlePace → `snapshot` → `object` / `store` |
 | `restore` | `main` → IdlePace → `restore` → `object` / `store` |
 | `verify` | `main` → IdlePace → `inspect::verify` → `object` / `store` |

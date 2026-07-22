@@ -179,8 +179,14 @@ pub fn copy_verified_with_pace(
 // 保存形式を判別して、元内容を読める Read を返す。
 // ============================================================================
 fn open(store: &Store, hash: &str) -> Result<Box<dyn Read>> {
-    let path = store.object_path(hash)?;
-    let mut file = File::open(&path).with_context(|| format!("object is missing: {hash}"))?;
+    open_file_reader(&store.object_path(hash)?, hash)
+}
+
+// ============================================================================
+// ファイルパスからオブジェクト Read を開く。
+// ============================================================================
+fn open_file_reader(path: &Path, hash: &str) -> Result<Box<dyn Read>> {
+    let mut file = File::open(path).with_context(|| format!("object is missing: {hash}"))?;
     let mut magic = [0_u8; MAGIC.len()];
 
     match file.read_exact(&mut magic) {

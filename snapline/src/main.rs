@@ -78,7 +78,11 @@ enum Command {
         message: Option<String>,
     },
     /// Show snapshots from oldest to newest.
-    Log,
+    Log {
+        /// Show only the newest N snapshots (e.g. `-1` for the latest only).
+        #[arg(short = 'n', long = "max-count", value_name = "N", value_parser = parse_max_count)]
+        max_count: Option<usize>,
+    },
     /// Restore a snapshot into a new or empty directory.
     Restore {
         #[arg(value_name = "SNAPSHOT_ID")]
@@ -111,6 +115,14 @@ struct BackgroundLimitsArgs {
     /// Milliseconds between resource checks while waiting. Requires --background.
     #[arg(long, global = true, default_value = "200")]
     poll_ms: u64,
+
+    /// Pause while system network usage exceeds this rate (KiB/s). Requires --background.
+    #[arg(long, global = true, default_value_t = background::DEFAULT_NETWORK_BUSY_KBPS)]
+    network_busy_kbps: u32,
+
+    /// Cap this process transfer rate (KiB/s). 0 means unlimited. Requires --background.
+    #[arg(long, global = true, default_value = "0")]
+    max_transfer_kbps: u32,
 }
 
 impl BackgroundLimitsArgs {
@@ -119,6 +131,8 @@ impl BackgroundLimitsArgs {
             cpu_busy_percent: self.cpu_busy_percent,
             memory_load_percent: self.memory_load_percent,
             poll_interval: Duration::from_millis(self.poll_ms),
+            network_busy_kbps: self.network_busy_kbps,
+            max_transfer_kbps: self.max_transfer_kbps,
         }
     }
 }
@@ -142,6 +156,46 @@ fn short_snapshot_id(id: &str) -> &str {
 }
 
 // ============================================================================
+// `log -1` のような git 風指定を `--max-count=N` へ正規化する。
+// ============================================================================
+fn normalize_log_digit_limits<I, T>(args: I) -> Vec<std::ffi::OsString>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString>,
+{
+    let mut args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    let Some(log_at) = args.iter().position(|arg| arg == "log") else {
+        return args;
+    };
+    for arg in &mut args[log_at + 1..] {
+        let Some(text) = arg.to_str() else {
+            continue;
+        };
+        let Some(digits) = text.strip_prefix('-') else {
+            continue;
+        };
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        *arg = format!("--max-count={digits}").into();
+    }
+    args
+}
+
+// ============================================================================
+// log の件数上限を解釈する。1 以上のみ許可する。
+// ============================================================================
+fn parse_max_count(raw: &str) -> Result<usize, String> {
+    let value: usize = raw
+        .parse()
+        .map_err(|_| format!("invalid max-count: {raw}"))?;
+    if value == 0 {
+        return Err("max-count must be at least 1".into());
+    }
+    Ok(value)
+}
+
+// ============================================================================
 // `--background` が使える操作かどうかを検査する。
 // 使えない操作に付けた場合はエラー（無視して続行しない）。
 // ============================================================================
@@ -151,7 +205,7 @@ fn ensure_background_allowed(cli: &Cli) -> Result<()> {
     }
     match cli.command {
         Command::Snapshot { .. } | Command::Restore { .. } | Command::Verify => Ok(()),
-        Command::Init { .. } | Command::Log | Command::Config | Command::Install => {
+        Command::Init { .. } | Command::Log { .. } | Command::Config | Command::Install => {
             bail!("--background applies only to snapshot, restore, and verify")
         }
     }
@@ -188,18 +242,22 @@ fn prepare_pace(cli: &Cli) -> Result<PreparedPace> {
 // CLI を解釈し、対応する処理へ振り分ける。
 // ============================================================================
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(normalize_log_digit_limits(std::env::args()));
     ensure_background_allowed(&cli)?;
     let store_opt = cli.store.as_deref();
 
     match &cli.command {
         Command::Init { target } => {
+            let mut progress = Progress::stderr_for_cli();
+            progress.begin("Initializing store");
             let current = std::env::current_dir()?;
             let target = target
                 .as_deref()
                 .or(cli.tree.as_deref())
                 .unwrap_or(current.as_path());
             let store = Store::init(target, store_opt)?;
+            progress.done("done.");
+            progress.end();
             println!("initialized {}", store.root.display());
             println!("target      {}", store.config.target.display());
             println!(
@@ -212,9 +270,10 @@ fn main() -> Result<()> {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
             let mut pace = prepare_pace(&cli)?;
-            let mut progress = Progress::stderr_if_tty();
+            let mut progress = Progress::stderr_for_cli();
             let outcome =
                 snapshot::create_with_pace(&store, message.clone(), pace.as_mut(), &mut progress)?;
+            progress.end();
             let files = outcome
                 .manifest
                 .entries
@@ -226,16 +285,21 @@ fn main() -> Result<()> {
                 outcome.manifest.id, files, outcome.skipped_dirs
             );
         }
-        Command::Log => {
+        Command::Log { max_count } => {
+            let mut progress = Progress::stderr_for_cli();
+            progress.begin("Opening store");
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
-            for manifest in inspect::list(&store)? {
+            progress.done("done.");
+            let rows = inspect::list_log_rows(&store, &mut progress, *max_count)?;
+            progress.end();
+            for row in rows {
                 println!(
                     "{}  {}  {} entries  {}",
-                    short_snapshot_id(&manifest.id),
-                    manifest.created_at,
-                    manifest.entries.len(),
-                    manifest.message.as_deref().unwrap_or("")
+                    short_snapshot_id(&row.id),
+                    row.created_at,
+                    row.entry_count,
+                    row.message.as_deref().unwrap_or("")
                 );
             }
         }
@@ -243,7 +307,7 @@ fn main() -> Result<()> {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
             let mut pace = prepare_pace(&cli)?;
-            let mut progress = Progress::stderr_if_tty();
+            let mut progress = Progress::stderr_for_cli();
             let count = restore::restore_with_pace(
                 &store,
                 id,
@@ -251,24 +315,34 @@ fn main() -> Result<()> {
                 pace.as_mut(),
                 &mut progress,
             )?;
+            progress.end();
             println!("restored {count} entries to {}", destination.display());
         }
         Command::Verify => {
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
             let mut pace = prepare_pace(&cli)?;
-            let mut progress = Progress::stderr_if_tty();
+            let mut progress = Progress::stderr_for_cli();
             let (snapshots, objects) =
                 inspect::verify_with_pace(&store, &mut progress, pace.as_mut())?;
+            progress.end();
             println!("verified {snapshots} snapshots and {objects} objects");
         }
         Command::Config => {
+            let mut progress = Progress::stderr_for_cli();
+            progress.begin("Reading config");
             let tree = resolve_tree(&cli)?;
             let store = Store::open(&tree, store_opt)?;
+            progress.done("done.");
+            progress.end();
             println!("{}", serde_json::to_string_pretty(&store.config)?);
         }
         Command::Install => {
+            let mut progress = Progress::stderr_for_cli();
+            progress.begin("Installing snapline");
             let destination = install::install()?;
+            progress.done("done.");
+            progress.end();
             println!("installed {}", destination.display());
             println!("open a new terminal, then run: snapline --help");
             #[cfg(not(windows))]
@@ -290,14 +364,46 @@ fn main() -> Result<()> {
 mod tests {
     use clap::Parser;
 
-    use super::Cli;
+    use super::{Cli, normalize_log_digit_limits};
+
+    // ============================================================================
+    // 正規化後の引列で CLI を解釈する。
+    // ============================================================================
+    fn parse_cli(args: &[&str]) -> Result<Cli, clap::error::Error> {
+        let normalized = normalize_log_digit_limits(args.iter().map(|value| value.to_string()));
+        Cli::try_parse_from(normalized)
+    }
 
     // ============================================================================
     // log サブコマンドの引数解釈を確認する。
     // ============================================================================
     #[test]
     fn parses_tree_and_log_command() {
-        assert!(Cli::try_parse_from(["snapline", "--tree", "workspace", "log"]).is_ok());
+        assert!(parse_cli(&["snapline", "--tree", "workspace", "log"]).is_ok());
+    }
+
+    // ============================================================================
+    // log -1 と --max-count を同じ意味として解釈できることを確認する。
+    // ============================================================================
+    #[test]
+    fn parses_log_newest_limit_forms() {
+        let from_digit = parse_cli(&["snapline", "log", "-1"]).unwrap();
+        let from_flag = parse_cli(&["snapline", "log", "--max-count", "1"]).unwrap();
+        let from_short = parse_cli(&["snapline", "log", "-n", "1"]).unwrap();
+        match (from_digit.command, from_flag.command, from_short.command) {
+            (
+                super::Command::Log {
+                    max_count: Some(1),
+                },
+                super::Command::Log {
+                    max_count: Some(1),
+                },
+                super::Command::Log {
+                    max_count: Some(1),
+                },
+            ) => {}
+            other => panic!("unexpected log parse result: {other:?}"),
+        }
     }
 
     // ============================================================================
@@ -305,7 +411,7 @@ mod tests {
     // ============================================================================
     #[test]
     fn parses_config_command() {
-        assert!(Cli::try_parse_from(["snapline", "--tree", "workspace", "config"]).is_ok());
+        assert!(parse_cli(&["snapline", "--tree", "workspace", "config"]).is_ok());
     }
 
     // ============================================================================
@@ -313,7 +419,7 @@ mod tests {
     // ============================================================================
     #[test]
     fn parses_init_target() {
-        assert!(Cli::try_parse_from(["snapline", "init", "workspace"]).is_ok());
+        assert!(parse_cli(&["snapline", "init", "workspace"]).is_ok());
     }
 
     // ============================================================================
@@ -322,7 +428,7 @@ mod tests {
     #[test]
     fn parses_external_store_option() {
         assert!(
-            Cli::try_parse_from([
+            parse_cli(&[
                 "snapline",
                 "--tree",
                 "workspace",
@@ -339,7 +445,7 @@ mod tests {
     // ============================================================================
     #[test]
     fn parses_install_command() {
-        assert!(Cli::try_parse_from(["snapline", "install"]).is_ok());
+        assert!(parse_cli(&["snapline", "install"]).is_ok());
     }
 
     // ============================================================================
@@ -348,7 +454,7 @@ mod tests {
     #[test]
     fn parses_background_option_on_snapshot() {
         assert!(
-            Cli::try_parse_from(["snapline", "--background", "snapshot", "-m", "idle"]).is_ok()
+            parse_cli(&["snapline", "--background", "snapshot", "-m", "idle"]).is_ok()
         );
     }
 
@@ -357,6 +463,6 @@ mod tests {
     // ============================================================================
     #[test]
     fn rejects_old_list_command_name() {
-        assert!(Cli::try_parse_from(["snapline", "list"]).is_err());
+        assert!(parse_cli(&["snapline", "list"]).is_err());
     }
 }

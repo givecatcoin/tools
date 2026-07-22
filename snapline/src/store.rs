@@ -9,6 +9,7 @@
 //!   config.json
 //!   objects/
 //!   snapshots/
+//!   summaries/
 //!   tmp/
 //! ============================================================================
 
@@ -22,12 +23,13 @@ use anyhow::{Context, Result, bail};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    model::{FORMAT_VERSION, SnapshotManifest, StoreConfig},
+    model::{FORMAT_VERSION, SnapshotManifest, SnapshotSummary, StoreConfig},
     settings::UserSettings,
 };
 
 const CONFIG_FILE: &str = "config.json";
 pub const STORE_DIR: &str = ".snapline";
+pub const SUMMARIES_DIR: &str = "summaries";
 const POINTER_PREFIX: &str = "SNAPLINE_STORE=";
 const MIN_SHORT_ID_LENGTH: usize = 4;
 
@@ -68,6 +70,7 @@ impl Store {
 
         fs::create_dir_all(root.join("objects"))?;
         fs::create_dir_all(root.join("snapshots"))?;
+        fs::create_dir_all(root.join(SUMMARIES_DIR))?;
         fs::create_dir_all(root.join("tmp"))?;
 
         let config = StoreConfig {
@@ -176,14 +179,64 @@ impl Store {
     }
 
     // ============================================================================
-    // マニフェストを原子的に書き込む。
+    // マニフェストを原子的に書き込み、log 用要約も同時に残す。
     // ============================================================================
     pub fn write_manifest(&self, manifest: &SnapshotManifest) -> Result<()> {
         write_json_atomic(
             &self.manifest_path(&manifest.id)?,
             manifest,
             &self.root.join("tmp"),
+        )?;
+        self.write_summary(&SnapshotSummary::from_manifest(manifest))
+    }
+
+    // ============================================================================
+    // スナップショット要約の保存先パス。
+    // ============================================================================
+    pub fn summary_path(&self, id: &str) -> Result<PathBuf> {
+        validate_snapshot_id(id)?;
+        Ok(self
+            .root
+            .join(SUMMARIES_DIR)
+            .join(format!("{id}.json")))
+    }
+
+    // ============================================================================
+    // log 用要約を原子的に書き込む。
+    // ============================================================================
+    pub fn write_summary(&self, summary: &SnapshotSummary) -> Result<()> {
+        fs::create_dir_all(self.root.join(SUMMARIES_DIR))?;
+        write_json_atomic(
+            &self.summary_path(&summary.id)?,
+            summary,
+            &self.root.join("tmp"),
         )
+    }
+
+    // ============================================================================
+    // 要約を読む。欠ける・壊れている場合は Err。
+    // ============================================================================
+    pub fn read_summary(&self, id: &str) -> Result<SnapshotSummary> {
+        read_json(&self.summary_path(id)?)
+    }
+
+    // ============================================================================
+    // snapshots/ 内のマニフェスト JSON パスを列挙する（名前順）。
+    // ============================================================================
+    pub fn snapshot_manifest_paths(&self) -> Result<Vec<PathBuf>> {
+        let mut paths = Vec::new();
+        let dir = self.root.join("snapshots");
+        if !dir.exists() {
+            return Ok(paths);
+        }
+        for item in fs::read_dir(dir)? {
+            let path = item?.path();
+            if path.extension().and_then(|value| value.to_str()) == Some("json") {
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        Ok(paths)
     }
 
     // ============================================================================
@@ -429,6 +482,7 @@ mod tests {
 
         assert_eq!(store.root, target.join(STORE_DIR).canonicalize()?);
         assert!(target.join(STORE_DIR).join("config.json").is_file());
+        assert!(target.join(STORE_DIR).join("summaries").is_dir());
         Ok(())
     }
 

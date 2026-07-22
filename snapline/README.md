@@ -59,6 +59,9 @@ Snapline の目的は、入れ子 Git を含むツリーを丸ごと保全する
 
 ## コマンド一覧と使い方
 
+Snapline が提供するコマンドは `init`、`snapshot`、`log`、`restore`、`verify`、`config`、`install` です。
+`init` でストアを作り、`snapshot` で記録します。
+
 共通オプション:
 
 | オプション | 環境変数 | 意味 |
@@ -71,7 +74,7 @@ Snapline の目的は、入れ子 Git を含むツリーを丸ごと保全する
 最初に見つかった `.snapline` のあるフォルダを対象ツリーにします。
 そのため、対象ツリー内のサブフォルダからも各コマンドを実行できます。
 
-### 初回セットアップ（PATH 登録）
+### `install` — PATH に登録する
 
 `git commit` のように、実行ファイルの場所を書かずに使うには、一度だけインストールします。
 
@@ -86,6 +89,8 @@ cargo build --release
 ```powershell
 snapline --help
 ```
+
+以降は `snapline` を直接呼べます。
 
 ### `init` — 履歴ストアを作成する
 
@@ -116,9 +121,16 @@ snapline snapshot -m "daily"
 
 ```powershell
 snapline --tree C:\work log
+
+# 最新だけ表示
+snapline --tree C:\work log -1
+snapline --tree C:\work log -n 1
 ```
 
 一覧の先頭には、末尾 UUID 部分から作った 12 文字の短縮 ID が表示されます。
+進捗は stderr、一覧そのものは stdout に出ます。
+表示に使う要約は `.snapline/summaries/` に別保存され、巨大なマニフェスト本体は読みません。
+旧ストアに要約が無い場合は、`log`（または次の `snapshot`）実行時にマニフェストから自動生成します。
 
 ### `restore` — 空の場所へ復元する
 
@@ -145,13 +157,6 @@ snapline --tree C:\work config
 
 設定の変更は `.snapline/config.json`（外部配置時はストア本体側）を編集します。
 
-### `install` — PATH に登録する
-
-```powershell
-.\target\release\snapline.exe install
-```
-
-以降は新しいターミナルで `snapline` を直接呼べます。
 
 ### `--background` — 低優先度オプション
 
@@ -170,18 +175,22 @@ snapline --background --cpu-busy-percent 60 snapshot
 
 `init` / `log` / `config` / `install` に `--background` を付けるとエラーになる（無視して続行しない）。
 
+`--poll-ms` や `--cpu-busy-percent` などは **`--background` と一緒に付けたときだけ** 有効です。単独では無視されます。
+
 しきい値（省略時は既定値）:
 
 | オプション | 既定 | 意味 |
 | --- | --- | --- |
 | `--cpu-busy-percent` | `70` | 全体 CPU 使用率がこれを超えたら待機 |
 | `--memory-load-percent` | `90` | 物理メモリ使用率がこれを超えたら待機 |
+| `--network-busy-kbps` | `8192` | システム全体のネットワーク使用量がこれを超えたら待機（KiB/s） |
+| `--max-transfer-kbps` | `0`（無制限） | このプロセスの転送速度上限（KiB/s） |
 | `--poll-ms` | `200` | 待機中の再確認間隔（ミリ秒） |
 
 動作:
 
 - プロセスを Windows のバックグラウンド優先度へ下げる（失敗したらエラーで止まる）
-- CPU / メモリを定期的に監視し、空くまで待ってから I/O を進める
+- CPU / メモリ / ネットワークを定期的に監視し、空くまで待ってから I/O を進める
 - 監視や優先度変更に失敗した場合、黙って通常優先度で続行することはしない
 
 ## `.snaplinenore`（gitignore 互換の除外）
@@ -217,6 +226,7 @@ C:\work\
     config.json
     objects\
     snapshots\
+    summaries\
     tmp\
   projectA\
   projectB\
@@ -234,6 +244,7 @@ C:\stores\work\
     config.json
     objects\
     snapshots\
+    summaries\
     tmp\
 ```
 

@@ -56,6 +56,33 @@ pub struct SnapshotManifest {
 }
 
 // ============================================================================
+// `log` 用の軽い要約。マニフェスト本体とは別に summaries/ へ保存する。
+// ============================================================================
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotSummary {
+    pub format_version: u32,
+    pub id: String,
+    pub created_at: String,
+    pub message: Option<String>,
+    pub entry_count: usize,
+}
+
+impl SnapshotSummary {
+    // ========================================================================
+    // マニフェストから要約を作る。
+    // ========================================================================
+    pub fn from_manifest(manifest: &SnapshotManifest) -> Self {
+        Self {
+            format_version: FORMAT_VERSION,
+            id: manifest.id.clone(),
+            created_at: manifest.created_at.clone(),
+            message: manifest.message.clone(),
+            entry_count: manifest.entries.len(),
+        }
+    }
+}
+
+// ============================================================================
 // スナップショット内の 1 エントリ（対象ルートからの相対パス基準）。
 // ============================================================================
 #[derive(Debug, Serialize, Deserialize)]
@@ -93,4 +120,50 @@ pub enum EntryKind {
     Directory,
     File,
     Symlink,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StoreConfig;
+
+    // ============================================================================
+    // 最小構成の config.json を読めることを確認する。
+    // ============================================================================
+    #[test]
+    fn store_config_deserializes_minimal_fields() {
+        let json = r#"{
+            "format_version": 1,
+            "target": "C:/work",
+            "settings": {
+                "exclude_dir_names": [],
+                "exclude_file_names": [],
+                "exclude_extensions": [],
+                "protect_git": true
+            }
+        }"#;
+        let config: StoreConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.format_version, 1);
+        assert_eq!(config.target, std::path::PathBuf::from("C:/work"));
+        assert!(config.settings.protect_git);
+    }
+
+    // ============================================================================
+    // 未知フィールドがあっても読めることを確認する。
+    // ============================================================================
+    #[test]
+    fn store_config_ignores_unknown_fields() {
+        let json = r#"{
+            "format_version": 1,
+            "target": "C:/work",
+            "settings": {
+                "exclude_dir_names": [],
+                "exclude_file_names": [],
+                "exclude_extensions": [],
+                "protect_git": true
+            },
+            "experimental_note": "ignored"
+        }"#;
+        let config: StoreConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.format_version, 1);
+    }
 }

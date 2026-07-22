@@ -53,8 +53,14 @@
 | U-21 | 親方向 discover | `store::discovers_tree_root_from_nested_directory` |
 | U-22 | 短縮 ID 一意解決 | `store::resolves_unique_short_snapshot_id` |
 | U-23 | 短縮 ID 曖昧拒否 | `store::rejects_ambiguous_short_snapshot_id` |
-| U-24 | CLI: log / config / init / store / install / `--background` / 旧 `list` 拒否 | `main::tests::*` |
+| U-24 | CLI: log / log -1 / config / init / store / install / `--background` / 旧 `list` 拒否 | `main::tests::*` |
 | U-25 | background しきい値範囲外拒否 | `background::rejects_invalid_limits` |
+| U-26 | 進捗フェーズ行は常に書く | `progress::begin_and_step_always_write_lines` |
+| U-27 | log は entries を件数だけ読む（旧要約補完用） | `inspect::counts_entries_without_materializing_them` |
+| U-28 | write_manifest が要約も書く | `inspect::write_manifest_also_writes_summary` |
+| U-29 | 旧ストアの要約欠落を log 時に補完 | `inspect::migrates_missing_summaries_on_log` |
+| U-30 | log の newest 制限 | `inspect::list_log_rows_respects_newest_limit` |
+| U-31 | background スモーク / 転送制限 / 高 CPU しきい値 | `background::activate_and_pace_smoke` 他 |
 
 合否: 全件 pass。1 件でも fail なら不合格。
 
@@ -127,6 +133,31 @@
 - 手順: `snapline --background log`
 - 期待: 終了コード非 0
 
+### I-16 `--background verify`
+
+- 手順: 正常ストアで `snapline --background verify`
+- 期待: 終了コード 0
+
+### I-17 `--background restore`
+
+- 手順: `snapline --background restore <id> <empty-dir>`
+- 期待: 終了コード 0、内容一致
+
+### I-18 `--background` + CPU 負荷
+
+- 手順: バックグラウンド CPU 負荷ジョブ実行中に `--background --cpu-busy-percent 99 snapshot`
+- 期待: 終了コード 0（高しきい値ならゲーム中でも完了できる）
+
+### I-19 snapshot 要約の別保存
+
+- 手順: snapshot 後に `.snapline/summaries/<id>.json` が存在することを確認
+- 期待: 要約に `entry_count` があり、マニフェスト件数と一致
+
+### I-20 旧ストア互換（要約欠落の自動補完）と `log -1`
+
+- 手順: 要約ファイルを削除してから `log` → 要約が再生成される。続けて複数 snapshot 後に `log -1`
+- 期待: 要約が復活し、`log -1` は最新 1 件のみ表示
+
 ### I-14 二重 init 拒否
 
 - 手順: 同一ツリーで init を 2 回
@@ -152,6 +183,7 @@
 
 | 日時 (UTC+9) | U | I | S | 備考 |
 | --- | --- | --- | --- | --- |
+| 2026-07-22 21:00 頃 | PASS（43） | PASS（I-01〜I-20） | PASS | 要約別保存 / log -1 / 旧ストア互換 |
 | 2026-07-20 14:50 頃 | PASS（31） | PASS（I-01〜I-15 全件） | PASS | `cargo test` / `run_e2e_tests.ps1` / `clippy -D warnings` |
 
 ## 8. 粒度の妥当性（証明）

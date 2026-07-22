@@ -24,6 +24,9 @@ pub const DEFAULT_MEMORY_LOAD_PERCENT: u8 = 90;
 /// 資源再確認の間隔。
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
+/// システム全体のネットワーク使用量がこれを超えたら待機する既定値（KiB/s）。
+pub const DEFAULT_NETWORK_BUSY_KBPS: u32 = 8_192;
+
 /// このバイト数処理するごとに資源を再確認する。
 const CHUNK_CHECK_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -35,6 +38,8 @@ pub struct BackgroundLimits {
     pub cpu_busy_percent: u8,
     pub memory_load_percent: u8,
     pub poll_interval: Duration,
+    pub network_busy_kbps: u32,
+    pub max_transfer_kbps: u32,
 }
 
 impl Default for BackgroundLimits {
@@ -43,6 +48,8 @@ impl Default for BackgroundLimits {
             cpu_busy_percent: DEFAULT_CPU_BUSY_PERCENT,
             memory_load_percent: DEFAULT_MEMORY_LOAD_PERCENT,
             poll_interval: DEFAULT_POLL_INTERVAL,
+            network_busy_kbps: DEFAULT_NETWORK_BUSY_KBPS,
+            max_transfer_kbps: 0,
         }
     }
 }
@@ -112,7 +119,9 @@ impl BackgroundPace {
                 .context("failed to sample system resources")?;
             let cpu_busy = sample.cpu_busy_percent > self.limits.cpu_busy_percent;
             let memory_busy = sample.memory_load_percent > self.limits.memory_load_percent;
-            if !cpu_busy && !memory_busy {
+            let network_busy =
+                sample.network_kbps > self.limits.network_busy_kbps;
+            if !cpu_busy && !memory_busy && !network_busy {
                 return Ok(());
             }
             thread::sleep(self.limits.poll_interval);
@@ -126,6 +135,14 @@ impl IoPace for BackgroundPace {
     }
 
     fn after_chunk(&mut self, bytes: usize) -> Result<()> {
+        if self.limits.max_transfer_kbps > 0 {
+            let bytes_per_second = self.limits.max_transfer_kbps as u64 * 1024;
+            let delay_ms = (bytes as u64).saturating_mul(1000) / bytes_per_second.max(1);
+            if delay_ms > 0 {
+                thread::sleep(Duration::from_millis(delay_ms));
+            }
+        }
+
         self.bytes_since_check = self.bytes_since_check.saturating_add(bytes as u64);
         if self.bytes_since_check >= CHUNK_CHECK_BYTES {
             self.bytes_since_check = 0;
@@ -142,16 +159,19 @@ impl IoPace for BackgroundPace {
 struct ResourceSample {
     cpu_busy_percent: u8,
     memory_load_percent: u8,
+    network_kbps: u32,
 }
 
 // ============================================================================
-// OS から CPU / メモリを読む。プラットフォームごとに実装を分ける。
+// OS から CPU / メモリ / ネットワークを読む。プラットフォームごとに実装を分ける。
 // ============================================================================
 struct ResourceSampler {
     #[cfg(windows)]
     previous: Option<WindowsCpuTimes>,
     #[cfg(not(windows))]
     previous_cpu: Option<(u64, u64)>,
+    previous_network_bytes: Option<u64>,
+    previous_sample_at: Option<std::time::Instant>,
 }
 
 impl ResourceSampler {
@@ -161,6 +181,8 @@ impl ResourceSampler {
             previous: None,
             #[cfg(not(windows))]
             previous_cpu: None,
+            previous_network_bytes: None,
+            previous_sample_at: None,
         };
         // 初回は差分が取れないので、短い間隔で 2 度読んで基準を作る。
         let _ = sampler.sample()?;
@@ -170,11 +192,28 @@ impl ResourceSampler {
     }
 
     fn sample(&mut self) -> Result<ResourceSample> {
+        let now = std::time::Instant::now();
         let memory_load_percent = memory_load_percent()?;
         let cpu_busy_percent = self.cpu_busy_percent()?;
+        let network_bytes = network_bytes_total()?;
+        let network_kbps = match (self.previous_network_bytes, self.previous_sample_at) {
+            (Some(previous_bytes), Some(previous_at)) => {
+                let elapsed = now.duration_since(previous_at).as_secs_f64();
+                if elapsed <= 0.0 {
+                    0
+                } else {
+                    let delta = network_bytes.saturating_sub(previous_bytes);
+                    ((delta as f64) / elapsed / 1024.0) as u32
+                }
+            }
+            _ => 0,
+        };
+        self.previous_network_bytes = Some(network_bytes);
+        self.previous_sample_at = Some(now);
         Ok(ResourceSample {
             cpu_busy_percent,
             memory_load_percent,
+            network_kbps,
         })
     }
 
@@ -402,9 +441,119 @@ unsafe extern "system" {
     fn GetLastError() -> u32;
 }
 
+// ============================================================================
+// 全インターフェースの送受信バイト合計を返す。
+// ============================================================================
+fn network_bytes_total() -> Result<u64> {
+    #[cfg(windows)]
+    {
+        read_windows_network_bytes()
+    }
+    #[cfg(not(windows))]
+    {
+        let text =
+            std::fs::read_to_string("/proc/net/dev").context("failed to read /proc/net/dev")?;
+        let mut total = 0_u64;
+        for line in text.lines().skip(2) {
+            let mut parts = line.split_whitespace();
+            let Some(_iface) = parts.next() else {
+                continue;
+            };
+            let receive = parts
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0);
+            let transmit = parts
+                .nth(7)
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0);
+            total = total.saturating_add(receive).saturating_add(transmit);
+        }
+        Ok(total)
+    }
+}
+
+#[cfg(windows)]
+fn read_windows_network_bytes() -> Result<u64> {
+    use std::mem::size_of;
+
+    #[repr(C)]
+    struct MibIfRow {
+        name: [u16; 256],
+        index: u32,
+        type_: u32,
+        mtu: u32,
+        speed: u32,
+        phys_addr_len: u32,
+        phys_addr: [u8; 8],
+        admin_status: u32,
+        oper_status: u32,
+        last_change: u32,
+        in_octets: u32,
+        in_ucast_pkts: u32,
+        in_nucast_pkts: u32,
+        in_discards: u32,
+        in_errors: u32,
+        in_unknown_protos: u32,
+        out_octets: u32,
+        out_ucast_pkts: u32,
+        out_nucast_pkts: u32,
+        out_discards: u32,
+        out_errors: u32,
+        out_qlen: u32,
+        descr: u32,
+    }
+
+    #[repr(C)]
+    struct MibIfTable {
+        count: u32,
+        table: [MibIfRow; 1],
+    }
+
+    let mut size = 0_u32;
+    unsafe {
+        let status = GetIfTable(std::ptr::null_mut(), &mut size, 0);
+        if status != ERROR_INSUFFICIENT_BUFFER {
+            bail!("GetIfTable size query failed with status {status}");
+        }
+        let mut buffer = vec![0_u8; size as usize];
+        let status = GetIfTable(buffer.as_mut_ptr().cast(), &mut size, 0);
+        if status != NO_ERROR {
+            bail!("GetIfTable failed with status {status}");
+        }
+        let table = &*(buffer.as_ptr().cast::<MibIfTable>());
+        let count = table.count as usize;
+        let base = buffer.as_ptr().cast::<u8>();
+        let row_size = size_of::<MibIfRow>();
+        let mut total = 0_u64;
+        for index in 0..count {
+            let row = &*(base.add(size_of::<u32>() + index * row_size).cast::<MibIfRow>());
+            total = total
+                .saturating_add(row.in_octets as u64)
+                .saturating_add(row.out_octets as u64);
+        }
+        Ok(total)
+    }
+}
+
+#[cfg(windows)]
+const NO_ERROR: u32 = 0;
+#[cfg(windows)]
+const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+
+#[cfg(windows)]
+#[link(name = "iphlpapi")]
+unsafe extern "system" {
+    fn GetIfTable(table: *mut core::ffi::c_void, size: *mut u32, order: i32) -> u32;
+}
+
 #[cfg(test)]
 mod tests {
-    use super::BackgroundLimits;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use super::{BackgroundLimits, activate};
+    use crate::pace::IoPace;
 
     // ============================================================================
     // しきい値の範囲外を拒否することを確認する。
@@ -417,5 +566,84 @@ mod tests {
         limits.cpu_busy_percent = 70;
         limits.memory_load_percent = 101;
         assert!(limits.validate().is_err());
+    }
+
+    fn try_activate(limits: BackgroundLimits) -> Option<super::BackgroundPace> {
+        activate(limits).ok()
+    }
+
+    // ============================================================================
+    // 低優先度モードへ入り、資源サンプリングが動くことを確認する。
+    // ============================================================================
+    #[test]
+    fn activate_and_pace_smoke() {
+        let mut limits = BackgroundLimits::default();
+        limits.cpu_busy_percent = 100;
+        limits.memory_load_percent = 100;
+        limits.network_busy_kbps = u32::MAX;
+        limits.max_transfer_kbps = 512;
+        let Some(mut pace) = try_activate(limits) else {
+            return;
+        };
+        pace.before_entry()
+            .expect("resource sampling should succeed");
+        pace.after_chunk(1024)
+            .expect("paced chunk should succeed");
+    }
+
+    // ============================================================================
+    // 転送速度上限が処理を遅延させることを確認する。
+    // ============================================================================
+    #[test]
+    fn max_transfer_kbps_throttles_chunks() {
+        let mut limits = BackgroundLimits::default();
+        limits.cpu_busy_percent = 100;
+        limits.memory_load_percent = 100;
+        limits.network_busy_kbps = u32::MAX;
+        limits.max_transfer_kbps = 64;
+        let Some(mut pace) = try_activate(limits) else {
+            return;
+        };
+        let started = Instant::now();
+        pace.after_chunk(64 * 1024)
+            .expect("paced chunk should succeed");
+        assert!(
+            started.elapsed() >= Duration::from_millis(900),
+            "expected transfer throttle delay, got {:?}",
+            started.elapsed()
+        );
+    }
+
+    // ============================================================================
+    // 高 CPU しきい値なら短時間の負荷下でも before_entry が返ることを確認する。
+    // ============================================================================
+    #[test]
+    fn high_cpu_threshold_does_not_block_on_brief_load() {
+        let mut limits = BackgroundLimits::default();
+        limits.cpu_busy_percent = 100;
+        limits.memory_load_percent = 100;
+        limits.network_busy_kbps = u32::MAX;
+        let Some(mut pace) = try_activate(limits) else {
+            return;
+        };
+        let load = thread::spawn(|| {
+            let start = Instant::now();
+            let mut acc = 0_u32;
+            while start.elapsed() < Duration::from_millis(200) {
+                for value in 0..10_000u32 {
+                    acc = acc.wrapping_add(value.wrapping_mul(value));
+                }
+            }
+            std::hint::black_box(acc);
+        });
+        let started = Instant::now();
+        pace.before_entry()
+            .expect("before_entry should succeed under brief load with 100% threshold");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "before_entry blocked too long: {:?}",
+            started.elapsed()
+        );
+        load.join().expect("load thread should finish");
     }
 }
