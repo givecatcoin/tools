@@ -4,7 +4,7 @@
 //!
 //! 方針: 確実な履歴バックアップ。明示除外以外は落とさない。
 //! 除外は (1) 今開いているストア本体 (2) exclude_dir_names
-//! (3) exclude_file_names / exclude_extensions (4) .snaplinenore の系統。
+//! (3) exclude_file_names / exclude_extensions (4) .snaplineignore の系統。
 //! `.gitignore` は見ない。子階層の `.snapline` も自動除外しない。
 //! 詳細は README の「スナップショットの包含・除外（重要）」を参照。
 //! ファイル実体は object モジュールへ委譲し、ここでは目録作りに集中する。
@@ -26,7 +26,7 @@ use crate::{
     object,
     pace::IoPace,
     progress::Progress,
-    snaplinenore::SnaplinenoreMatcher,
+    snaplineignore::SnaplineignoreMatcher,
     store::Store,
 };
 
@@ -74,7 +74,7 @@ pub fn create_with_pace(
     let settings = store.config.settings.clone();
     let mut entries = Vec::new();
     let skipped_dirs = Cell::new(0_usize);
-    let matcher = RefCell::new(SnaplinenoreMatcher::new(&store.config.target));
+    let matcher = RefCell::new(SnaplineignoreMatcher::new(&store.config.target));
     let walk_error: RefCell<Option<anyhow::Error>> = RefCell::new(None);
     let mut entry_count = 0_usize;
     let mut file_count = 0_usize;
@@ -116,7 +116,7 @@ pub fn create_with_pace(
                 return false;
             }
 
-            // 各階層の `.snaplinenore` を重ねて判定する。
+            // 各階層の `.snaplineignore` を重ねて判定する。
             match matcher.borrow_mut().should_exclude(entry.path(), is_dir) {
                 Ok(true) => {
                     if is_dir {
@@ -283,15 +283,15 @@ mod tests {
     }
 
     // ============================================================================
-    // 子階層の `.snaplinenore` も適用されることを確認する。
+    // 子階層の `.snaplineignore` も適用されることを確認する。
     // ============================================================================
     #[test]
-    fn applies_nested_snaplinenore_during_snapshot() -> Result<()> {
+    fn applies_nested_snaplineignore_during_snapshot() -> Result<()> {
         let root = tempfile::tempdir()?;
         let target = root.path().join("workspace");
         fs::create_dir_all(target.join("app/cache"))?;
-        fs::write(target.join(".snaplinenore"), "*.log\n")?;
-        fs::write(target.join("app/.snaplinenore"), "cache/\n")?;
+        fs::write(target.join(".snaplineignore"), "*.log\n")?;
+        fs::write(target.join("app/.snaplineignore"), "cache/\n")?;
         fs::write(target.join("app/keep.txt"), "ok")?;
         fs::write(target.join("app/noise.log"), "x")?;
         fs::write(target.join("app/cache/x.bin"), "x")?;
@@ -306,7 +306,7 @@ mod tests {
             .collect();
 
         assert!(paths.iter().any(|path| path.ends_with("app/keep.txt")));
-        assert!(paths.iter().any(|path| path.ends_with(".snaplinenore")));
+        assert!(paths.iter().any(|path| path.ends_with(".snaplineignore")));
         assert!(!paths.iter().any(|path| path.ends_with("noise.log")));
         assert!(!paths.iter().any(|path| path.contains("cache")));
         Ok(())

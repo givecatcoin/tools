@@ -1,6 +1,6 @@
 # Snapline テスト仕様書
 
-対象バージョン: リポジトリ現行（`snapline` 0.1.0 系）  
+対象バージョン: リポジトリ現行（`snapline` 0.2.0 系）
 方針: 確実な履歴バックアップ。あいまいな成功は不合格とする。
 
 ## 1. 目的
@@ -36,10 +36,10 @@
 | U-04 | ディレクトリ名除外は名前一致 | `settings::does_not_treat_files_by_path_semantics_here` |
 | U-05 | ファイル名除外 | `settings::excludes_configured_file_names` |
 | U-06 | 拡張子除外（`.` 有無同一視） | `settings::excludes_configured_extensions` |
-| U-07 | 階層 `.snaplinenore` | `snaplinenore::applies_nested_snaplinenore_files` |
-| U-08 | `.snaplinenore` で `.git` 除外可 | `snaplinenore::snaplinenore_can_exclude_dot_git` |
+| U-07 | 階層 `.snaplineignore` | `snaplineignore::applies_nested_snaplineignore_files` |
+| U-08 | `.snaplineignore` で `.git` 除外可 | `snaplineignore::snaplineignore_can_exclude_dot_git` |
 | U-09 | snapshot で dir 除外と `.git` 保持 | `snapshot::excludes_named_dirs_but_keeps_git` |
-| U-10 | snapshot で nested snaplinenore | `snapshot::applies_nested_snaplinenore_during_snapshot` |
+| U-10 | snapshot で nested snaplineignore | `snapshot::applies_nested_snaplineignore_during_snapshot` |
 | U-11 | snapshot で file/ext 除外 | `snapshot::excludes_configured_file_names_and_extensions` |
 | U-12 | 圧縮と復元 | `object::compresses_repetitive_content_and_restores_it` |
 | U-13 | 非圧縮保持 | `object::keeps_incompressible_content_raw` |

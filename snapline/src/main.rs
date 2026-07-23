@@ -11,7 +11,7 @@ mod pace;
 mod progress;
 mod restore;
 mod settings;
-mod snaplinenore;
+mod snaplineignore;
 mod snapshot;
 mod store;
 

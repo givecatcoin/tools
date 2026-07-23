@@ -19,7 +19,7 @@ Snapline の snapshot は、**明示された除外以外を落とさない**こ
 | `settings.exclude_dir_names` | その**名前のディレクトリ** | ファイル名は対象外。ツリー内のどこにあっても名前一致で除外 |
 | `settings.exclude_file_names` | その**名前のファイル** | ディレクトリには適用しない。既定は空 |
 | `settings.exclude_extensions` | その**拡張子のファイル** | `.log` と `log` は同じ。末尾拡張子のみ。既定は空 |
-| 各階層の `.snaplinenore` | ルールに一致するパス | `.gitignore` 互換記法。親と子のルールを重ねて判定 |
+| 各階層の `.snaplineignore` | ルールに一致するパス | `.gitignore` 互換記法。親と子のルールを重ねて判定 |
 
 これら以外の通常ファイル・ディレクトリは記録対象です。
 
@@ -41,7 +41,7 @@ C:\work\app\src\main.rs    ← 入る
 ```
 
 `C:\work` で `snapline snapshot` すると、子の `app\.snapline` も履歴に含まれます。
-入れ子ストアを外したい場合だけ、`.snaplinenore` や `exclude_dir_names` で明示してください。
+入れ子ストアを外したい場合だけ、`.snaplineignore` や `exclude_dir_names` で明示してください。
 
 ### 記録対象だが「全部の中身」ではないもの
 
@@ -186,25 +186,25 @@ snapline --background --cpu-busy-percent 60 snapshot
 - CPU / メモリを定期的に監視し、空くまで待ってから I/O を進める
 - 監視や優先度変更に失敗した場合、黙って通常優先度で続行することはしない
 
-## `.snaplinenore`（gitignore 互換の除外）
+## `.snaplineignore`（gitignore 互換の除外）
 
-`.gitignore` には追従しません。代わりに Snapline 専用の `.snaplinenore` を使います。
+`.gitignore` には追従しません。代わりに Snapline 専用の `.snaplineignore` を使います。
 詳細な包含方針は「スナップショットの包含・除外（重要）」を参照してください。
 
 - 記法は `.gitignore` と同じ
-- ツリー内の**すべての階層**にある `.snaplinenore` が有効
+- ツリー内の**すべての階層**にある `.snaplineignore` が有効
 - 親のルールと子のルールを重ねて判定する（子の否定パターン `!` も有効）
 - `exclude_dir_names` のディレクトリ名除外も並行して効く
-- `.git` を落としたい場合は `exclude_dir_names` や `.snaplinenore` で明示する
+- `.git` を落としたい場合は `exclude_dir_names` や `.snaplineignore` で明示する
 
 例:
 
 ```text
-# C:\work\.snaplinenore
+# C:\work\.snaplineignore
 *.log
 *.tmp
 
-# C:\work\app\.snaplinenore
+# C:\work\app\.snaplineignore
 cache/
 build/
 ```

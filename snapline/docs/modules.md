@@ -16,9 +16,9 @@ flowchart TB
 
   cli --> pacePick --> op --> object --> store --> data
 
-  snaplinenore["snaplinenore<br/>パス除外"]
-  op -.->|snapshot のみ| snaplinenore
-  snaplinenore --> data
+  snaplineignore["snaplineignore<br/>パス除外"]
+  op -.->|snapshot のみ| snaplineignore
+  snaplineignore --> data
 
   background["background<br/>低優先度と資源監視"]
   pacePick -.->|--background 時| background
@@ -32,7 +32,7 @@ flowchart TB
 3. 同じ操作モジュールを呼ぶ（`snapshot` / `restore` / `inspect`）
 4. ファイル実体は `object` が扱う
 5. 置き場所とマニフェストは `store` が扱う
-6. データの形と除外設定は `model` / `settings`（記録時は `snaplinenore` も）
+6. データの形と除外設定は `model` / `settings`（記録時は `snaplineignore` も）
 
 `install` だけはこの流れの外で、実行ファイルの PATH 登録だけを行う。
 
@@ -61,7 +61,7 @@ flowchart TB
 | `store` | 5 | `.snapline` 構造・ロック・マニフェスト |
 | `model` | 6 | オンディスク JSON の型 |
 | `settings` | 6 | 除外設定と既定値 |
-| `snaplinenore` | 3→6 | 階層 `.snaplinenore` |
+| `snaplineignore` | 3→6 | 階層 `.snaplineignore` |
 | `install` | （別） | PATH 登録 |
 
 ## 依存の向き
@@ -74,7 +74,7 @@ main
   → snapshot / restore / inspect
       → object → store → model → settings
       → pace
-      → snaplinenore → settings   （snapshot のみ）
+      → snaplineignore → settings   （snapshot のみ）
   → store                         （init / config）
   → install                       （install）
 ```
@@ -102,4 +102,4 @@ main
 | 記録・復元・検証の手順 | `snapshot` / `restore` / `inspect` |
 | 圧縮・ハッシュ形式 | `object` |
 | ストア配置 | `store` |
-| 除外ルール | `settings` / `snaplinenore` / README の包含節 |
+| 除外ルール | `settings` / `snaplineignore` / README の包含節 |
