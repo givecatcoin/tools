@@ -12,8 +12,6 @@ use std::{
 use anyhow::{Context, Result};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
-use crate::settings::UserSettings;
-
 pub const SNAPLINENORE_FILE: &str = ".snaplinenore";
 
 // ============================================================================
@@ -21,36 +19,25 @@ pub const SNAPLINENORE_FILE: &str = ".snaplinenore";
 // ============================================================================
 pub struct SnaplinenoreMatcher {
     target: PathBuf,
-    settings: UserSettings,
     /// ディレクトリ絶対パス → その場所に置かれたルール。
     layers: HashMap<PathBuf, Option<Gitignore>>,
 }
 
 impl SnaplinenoreMatcher {
     // ============================================================================
-    // 対象ツリーとユーザー設定を受け取り、空のキャッシュで始める。
+    // 対象ツリーを受け取り、空のキャッシュで始める。
     // ============================================================================
-    pub fn new(target: &Path, settings: UserSettings) -> Self {
+    pub fn new(target: &Path) -> Self {
         Self {
             target: target.to_path_buf(),
-            settings,
             layers: HashMap::new(),
         }
     }
 
     // ============================================================================
     // このエントリをスナップショットから除外するか判定する。
-    // protect_git が有効な `.git` は、ルールがあっても落とさない。
     // ============================================================================
     pub fn should_exclude(&mut self, absolute: &Path, is_dir: bool) -> Result<bool> {
-        if is_dir
-            && let Some(name) = absolute.file_name()
-            && self.settings.protect_git
-            && name == std::ffi::OsStr::new(".git")
-        {
-            return Ok(false);
-        }
-
         let relative = absolute
             .strip_prefix(&self.target)
             .with_context(|| format!("path escaped target: {}", absolute.display()))?
@@ -140,7 +127,6 @@ mod tests {
     use anyhow::Result;
 
     use super::SnaplinenoreMatcher;
-    use crate::settings::UserSettings;
 
     // ============================================================================
     // ルートと子階層の `.snaplinenore` が両方効くことを確認する。
@@ -157,7 +143,7 @@ mod tests {
         fs::write(target.join("project/logs/a.txt"), "x")?;
         fs::write(target.join("project/ok.txt"), "ok")?;
 
-        let mut matcher = SnaplinenoreMatcher::new(&target, UserSettings::defaults());
+        let mut matcher = SnaplinenoreMatcher::new(&target);
         assert!(!matcher.should_exclude(&target.join("keep.txt"), false)?);
         assert!(matcher.should_exclude(&target.join("drop.tmp"), false)?);
         assert!(matcher.should_exclude(&target.join("project/logs"), true)?);
@@ -166,17 +152,17 @@ mod tests {
     }
 
     // ============================================================================
-    // protect_git が `.snaplinenore` による `.git` 除外を抑止することを確認する。
+    // `.snaplinenore` で `.git` を除外できることを確認する。
     // ============================================================================
     #[test]
-    fn protect_git_overrides_snaplinenore() -> Result<()> {
+    fn snaplinenore_can_exclude_dot_git() -> Result<()> {
         let root = tempfile::tempdir()?;
         let target = root.path().join("tree");
         fs::create_dir_all(target.join("repo/.git"))?;
         fs::write(target.join(".snaplinenore"), ".git/\n")?;
 
-        let mut matcher = SnaplinenoreMatcher::new(&target, UserSettings::defaults());
-        assert!(!matcher.should_exclude(&target.join("repo/.git"), true)?);
+        let mut matcher = SnaplinenoreMatcher::new(&target);
+        assert!(matcher.should_exclude(&target.join("repo/.git"), true)?);
         Ok(())
     }
 }

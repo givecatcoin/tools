@@ -137,18 +137,17 @@ mod tests {
             "settings": {
                 "exclude_dir_names": [],
                 "exclude_file_names": [],
-                "exclude_extensions": [],
-                "protect_git": true
+                "exclude_extensions": []
             }
         }"#;
         let config: StoreConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.format_version, 1);
         assert_eq!(config.target, std::path::PathBuf::from("C:/work"));
-        assert!(config.settings.protect_git);
+        assert!(config.settings.exclude_dir_names.is_empty());
     }
 
     // ============================================================================
-    // 未知フィールドがあっても読めることを確認する。
+    // 未知フィールド（旧 protect_git 含む）があっても読めることを確認する。
     // ============================================================================
     #[test]
     fn store_config_ignores_unknown_fields() {

@@ -29,7 +29,7 @@ Snapline の snapshot は、**明示された除外以外を落とさない**こ
 | --- | --- |
 | `.gitignore` | **見ない。** |
 | 子階層の `.snapline` | **除外しない。中身ごと親スナップショットに入る** |
-| 入れ子の Git リポジトリ | 特別扱いしない。`.git` は既定で保護して含める |
+| 入れ子の Git リポジトリ | 特別扱いしない。`.git` は既定では除外せず含める |
 | シンボリックリンク先のツリー | 辿らない。リンク自体は記録する |
 
 例:
@@ -51,11 +51,6 @@ C:\work\app\src\main.rs    ← 入る
 | 読み取り失敗 | 黙ってスキップしない。スナップショット全体を中断する |
 | 非対応の特殊エントリ | ファイル／ディレクトリ／シンボリックリンク以外はエラーで中断 |
 | 読み取り中に内容が変化したファイル | 中断する（壊れた履歴を残さない） |
-
-### `protect_git` について
-
-既定 `true` です。`.git` は `exclude_dir_names` や `.snaplinenore` に書いても落としません。
-Snapline の目的は、入れ子 Git を含むツリーを丸ごと保全することだからです。
 
 ## コマンド一覧と使い方
 
@@ -183,14 +178,12 @@ snapline --background --cpu-busy-percent 60 snapshot
 | --- | --- | --- |
 | `--cpu-busy-percent` | `70` | 全体 CPU 使用率がこれを超えたら待機 |
 | `--memory-load-percent` | `90` | 物理メモリ使用率がこれを超えたら待機 |
-| `--network-busy-kbps` | `8192` | システム全体のネットワーク使用量がこれを超えたら待機（KiB/s） |
-| `--max-transfer-kbps` | `0`（無制限） | このプロセスの転送速度上限（KiB/s） |
 | `--poll-ms` | `200` | 待機中の再確認間隔（ミリ秒） |
 
 動作:
 
 - プロセスを Windows のバックグラウンド優先度へ下げる（失敗したらエラーで止まる）
-- CPU / メモリ / ネットワークを定期的に監視し、空くまで待ってから I/O を進める
+- CPU / メモリを定期的に監視し、空くまで待ってから I/O を進める
 - 監視や優先度変更に失敗した場合、黙って通常優先度で続行することはしない
 
 ## `.snaplinenore`（gitignore 互換の除外）
@@ -202,7 +195,7 @@ snapline --background --cpu-busy-percent 60 snapshot
 - ツリー内の**すべての階層**にある `.snaplinenore` が有効
 - 親のルールと子のルールを重ねて判定する（子の否定パターン `!` も有効）
 - `exclude_dir_names` のディレクトリ名除外も並行して効く
-- `protect_git` が有効なとき、`.git` は `.snaplinenore` でも除外されない
+- `.git` を落としたい場合は `exclude_dir_names` や `.snaplinenore` で明示する
 
 例:
 
@@ -261,7 +254,6 @@ C:\stores\work\
 | `settings.exclude_dir_names` | 再生成可能な依存・キャッシュ名 | その名前のディレクトリをツリー全体で除外 |
 | `settings.exclude_file_names` | `[]` | その名前のファイルをツリー全体で除外 |
 | `settings.exclude_extensions` | `[]` | その拡張子のファイルをツリー全体で除外（`.log` / `log` は同じ） |
-| `settings.protect_git` | `true` | `.git` を除外リストや `.snaplinenore` でも落とさない |
 
 設定の保存場所は `.snapline/config.json`（外部配置時はストア本体側）です。
 変更は次の `snapshot` から反映されます。専用の設定変更コマンドはまだありません。

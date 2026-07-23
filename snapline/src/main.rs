@@ -115,14 +115,6 @@ struct BackgroundLimitsArgs {
     /// Milliseconds between resource checks while waiting. Requires --background.
     #[arg(long, global = true, default_value = "200")]
     poll_ms: u64,
-
-    /// Pause while system network usage exceeds this rate (KiB/s). Requires --background.
-    #[arg(long, global = true, default_value_t = background::DEFAULT_NETWORK_BUSY_KBPS)]
-    network_busy_kbps: u32,
-
-    /// Cap this process transfer rate (KiB/s). 0 means unlimited. Requires --background.
-    #[arg(long, global = true, default_value = "0")]
-    max_transfer_kbps: u32,
 }
 
 impl BackgroundLimitsArgs {
@@ -131,8 +123,6 @@ impl BackgroundLimitsArgs {
             cpu_busy_percent: self.cpu_busy_percent,
             memory_load_percent: self.memory_load_percent,
             poll_interval: Duration::from_millis(self.poll_ms),
-            network_busy_kbps: self.network_busy_kbps,
-            max_transfer_kbps: self.max_transfer_kbps,
         }
     }
 }
@@ -264,7 +254,6 @@ fn main() -> Result<()> {
                 "exclude_dir_names {} names (edit config.json to change)",
                 store.config.settings.exclude_dir_names.len()
             );
-            println!("protect_git {}", store.config.settings.protect_git);
         }
         Command::Snapshot { message } => {
             let tree = resolve_tree(&cli)?;

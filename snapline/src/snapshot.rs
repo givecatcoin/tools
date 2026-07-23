@@ -74,10 +74,7 @@ pub fn create_with_pace(
     let settings = store.config.settings.clone();
     let mut entries = Vec::new();
     let skipped_dirs = Cell::new(0_usize);
-    let matcher = RefCell::new(SnaplinenoreMatcher::new(
-        &store.config.target,
-        settings.clone(),
-    ));
+    let matcher = RefCell::new(SnaplinenoreMatcher::new(&store.config.target));
     let walk_error: RefCell<Option<anyhow::Error>> = RefCell::new(None);
     let mut entry_count = 0_usize;
     let mut file_count = 0_usize;
@@ -274,7 +271,7 @@ mod tests {
             .map(|entry| entry.path.to_string_lossy().replace('\\', "/"))
             .collect();
 
-        assert!(paths.iter().any(|path| path.contains(".git")));
+        assert!(paths.iter().any(|path| path.contains(".git/")));
         assert!(paths.iter().any(|path| path.ends_with(".gitignore")));
         assert!(paths.iter().any(|path| path.ends_with("src/main.rs")));
         assert!(!paths.iter().any(|path| path.contains("node_modules")));

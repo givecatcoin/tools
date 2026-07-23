@@ -31,13 +31,13 @@
 | ID | 確認内容 | 実装テスト |
 | --- | --- | --- |
 | U-01 | 既定除外に Git 関連名が無い | `settings::defaults_never_exclude_git_related_names` |
-| U-02 | `protect_git` が `.git` 除外を抑止 | `settings::protect_git_blocks_exclusion_of_dot_git` |
-| U-03 | `protect_git=false` で `.git` 除外可 | `settings::protect_git_can_be_disabled_explicitly` |
+| U-02 | 既定では `.git` を除外しない | `settings::defaults_keep_dot_git_directory` |
+| U-03 | 明示追加すれば `.git` を除外できる | `settings::can_exclude_dot_git_by_adding_to_exclude_list` |
 | U-04 | ディレクトリ名除外は名前一致 | `settings::does_not_treat_files_by_path_semantics_here` |
 | U-05 | ファイル名除外 | `settings::excludes_configured_file_names` |
 | U-06 | 拡張子除外（`.` 有無同一視） | `settings::excludes_configured_extensions` |
 | U-07 | 階層 `.snaplinenore` | `snaplinenore::applies_nested_snaplinenore_files` |
-| U-08 | `.snaplinenore` でも `.git` 保護 | `snaplinenore::protect_git_overrides_snaplinenore` |
+| U-08 | `.snaplinenore` で `.git` 除外可 | `snaplinenore::snaplinenore_can_exclude_dot_git` |
 | U-09 | snapshot で dir 除外と `.git` 保持 | `snapshot::excludes_named_dirs_but_keeps_git` |
 | U-10 | snapshot で nested snaplinenore | `snapshot::applies_nested_snaplinenore_during_snapshot` |
 | U-11 | snapshot で file/ext 除外 | `snapshot::excludes_configured_file_names_and_extensions` |
@@ -60,7 +60,7 @@
 | U-28 | write_manifest が要約も書く | `inspect::write_manifest_also_writes_summary` |
 | U-29 | 旧ストアの要約欠落を log 時に補完 | `inspect::migrates_missing_summaries_on_log` |
 | U-30 | log の newest 制限 | `inspect::list_log_rows_respects_newest_limit` |
-| U-31 | background スモーク / 転送制限 / 高 CPU しきい値 | `background::activate_and_pace_smoke` 他 |
+| U-31 | background スモーク / 高 CPU しきい値 | `background::activate_and_pace_smoke` 他 |
 
 合否: 全件 pass。1 件でも fail なら不合格。
 

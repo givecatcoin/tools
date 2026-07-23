@@ -38,12 +38,6 @@ pub struct UserSettings {
     /// 複合拡張子は末尾だけを見る（`archive.tar.gz` は `gz`）。既定は空。
     #[serde(default)]
     pub exclude_extensions: Vec<String>,
-
-    /// true のとき、`.git` を除外リストに書いても強制的に含める。
-    /// Snapline の目的は入れ子 Git を含む丸ごと履歴化にある。
-    /// 誤設定で `.git` が抜け落ちる事故を防ぐための安全弁。
-    #[serde(default = "default_true")]
-    pub protect_git: bool,
 }
 
 impl UserSettings {
@@ -55,7 +49,6 @@ impl UserSettings {
             exclude_dir_names: default_exclude_dir_names(),
             exclude_file_names: Vec::new(),
             exclude_extensions: Vec::new(),
-            protect_git: true,
         }
     }
 
@@ -67,11 +60,6 @@ impl UserSettings {
             // 非 Unicode 名は除外ルールの対象外とし、記録側で扱う。
             return false;
         };
-
-        // Git リポジトリ本体は、設定ミスでも落とさない。
-        if self.protect_git && names_equal(name, ".git") {
-            return false;
-        }
 
         self.exclude_dir_names
             .iter()
@@ -118,13 +106,6 @@ impl UserSettings {
             .unwrap_or_else(|| OsStr::new("").to_owned());
         self.should_exclude_file_name(&name) || self.should_exclude_extension(path)
     }
-}
-
-// ============================================================================
-// serde の default = "..." から呼ぶための薄いラッパ。
-// ============================================================================
-fn default_true() -> bool {
-    true
 }
 
 // ============================================================================
@@ -217,32 +198,27 @@ mod tests {
     }
 
     // ============================================================================
-    // protect_git が有効なら .git を除外しないことを確認する。
+    // 既定では .git を除外しないことを確認する。
     // ============================================================================
     #[test]
-    fn protect_git_blocks_exclusion_of_dot_git() {
-        let settings = UserSettings {
-            exclude_dir_names: vec![".git".into(), "node_modules".into()],
-            exclude_file_names: Vec::new(),
-            exclude_extensions: Vec::new(),
-            protect_git: true,
-        };
+    fn defaults_keep_dot_git_directory() {
+        let settings = UserSettings::defaults();
         assert!(!settings.should_exclude_dir_name(OsStr::new(".git")));
         assert!(settings.should_exclude_dir_name(OsStr::new("node_modules")));
     }
 
     // ============================================================================
-    // protect_git を無効にすれば .git 除外ができることを確認する。
+    // 明示追加すれば .git を除外できることを確認する。
     // ============================================================================
     #[test]
-    fn protect_git_can_be_disabled_explicitly() {
+    fn can_exclude_dot_git_by_adding_to_exclude_list() {
         let settings = UserSettings {
-            exclude_dir_names: vec![".git".into()],
+            exclude_dir_names: vec![".git".into(), "node_modules".into()],
             exclude_file_names: Vec::new(),
             exclude_extensions: Vec::new(),
-            protect_git: false,
         };
         assert!(settings.should_exclude_dir_name(OsStr::new(".git")));
+        assert!(settings.should_exclude_dir_name(OsStr::new("node_modules")));
     }
 
     // ============================================================================
@@ -264,7 +240,6 @@ mod tests {
             exclude_dir_names: Vec::new(),
             exclude_file_names: vec!["Thumbs.db".into(), "desktop.ini".into()],
             exclude_extensions: Vec::new(),
-            protect_git: true,
         };
         assert!(settings.should_exclude_file(Path::new("photos/Thumbs.db")));
         assert!(settings.should_exclude_file(Path::new("desktop.ini")));
@@ -281,7 +256,6 @@ mod tests {
             exclude_dir_names: Vec::new(),
             exclude_file_names: Vec::new(),
             exclude_extensions: vec![".log".into(), "tmp".into()],
-            protect_git: true,
         };
         assert!(settings.should_exclude_file(Path::new("app/noise.log")));
         assert!(settings.should_exclude_file(Path::new("cache/x.tmp")));
