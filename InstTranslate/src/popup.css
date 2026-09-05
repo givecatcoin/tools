@@ -1,0 +1,147 @@
+:root {
+  color-scheme: light;
+}
+
+html {
+  overflow: visible;
+}
+
+body {
+  margin: 0;
+  width: 360px;
+  min-height: 220px;
+  padding: 16px;
+  font-family: "Segoe UI", "Hiragino Sans", sans-serif;
+  font-size: 13px;
+  color: #202124;
+  background: #fff;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.header {
+  margin-bottom: 14px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #5f6368;
+}
+
+p {
+  margin: 0;
+  color: #5f6368;
+  line-height: 1.5;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+select {
+  min-width: 140px;
+  padding: 4px 6px;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex: 0 0 40px;
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.switch-slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 11px;
+  background: #dadce0;
+  pointer-events: none;
+}
+
+.switch-slider::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.switch input:checked + .switch-slider {
+  background: #1a73e8;
+}
+
+.switch input:checked + .switch-slider::before {
+  left: 21px;
+}
+
+.switch input:focus-visible + .switch-slider {
+  outline: 2px solid #1a73e8;
+  outline-offset: 2px;
+}
+
+.help {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #e8eaed;
+  overflow: visible;
+}
+
+summary {
+  cursor: pointer;
+  color: #5f6368;
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::after {
+  content: " ▸";
+  font-weight: 400;
+}
+
+details[open] summary::after {
+  content: " ▾";
+}
+
+details[open] summary {
+  margin-bottom: 8px;
+}
+
+ol {
+  margin: 0;
+  padding: 0 0 4px 1.4em;
+  color: #3c4043;
+  line-height: 1.7;
+  overflow: visible;
+}
+
+li + li {
+  margin-top: 6px;
+}

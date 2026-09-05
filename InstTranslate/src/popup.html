@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <title>InstTranslate</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <header class="header">
+      <h1>InstTranslate</h1>
+      <p>選択すると右上に翻訳を出します。</p>
+    </header>
+
+    <label class="row">
+      <span>即時翻訳</span>
+      <span class="switch">
+        <input id="enabled" type="checkbox">
+        <span class="switch-slider" aria-hidden="true"></span>
+      </span>
+    </label>
+
+    <label class="row">
+      <span>選択解除後も残す</span>
+      <span class="switch">
+        <input id="keepPanelAfterDeselect" type="checkbox">
+        <span class="switch-slider" aria-hidden="true"></span>
+      </span>
+    </label>
+
+    <label class="row">
+      <span>翻訳元</span>
+      <select id="sourceLanguage"></select>
+    </label>
+
+    <label class="row">
+      <span>翻訳先</span>
+      <select id="targetLanguage"></select>
+    </label>
+
+    <details class="help">
+      <summary>使い方</summary>
+      <ol>
+        <li>Webページ上のテキストを選択する</li>
+        <li>画面右上に翻訳が出る</li>
+        <li>選択解除後も残すをオンにすると、選択を外しても翻訳が残る。× か Esc で閉じる</li>
+      </ol>
+    </details>
+
+    <script src="shared.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
