@@ -1,6 +1,6 @@
 /*
 ===========================================================================
-ツールバー用の設定画面。有効状態と翻訳元・翻訳先言語を扱う。
+ツールバー用の設定画面。有効状態、言語、文字サイズを扱う。
 ============================================================================
 */
 (function initPopup() {
@@ -9,6 +9,7 @@
   const keepPanelInput = document.getElementById("keepPanelAfterDeselect");
   const sourceSelect = document.getElementById("sourceLanguage");
   const targetSelect = document.getElementById("targetLanguage");
+  const fontSizeInput = document.getElementById("fontSize");
   const helpDetails = document.querySelector(".help");
 
   /*
@@ -17,7 +18,7 @@
   ============================================================================
   */
   function syncPopupHeight() {
-    document.body.style.minHeight = helpDetails.open ? "400px" : "260px";
+    document.body.style.minHeight = helpDetails.open ? "430px" : "290px";
   }
 
   /*
@@ -50,6 +51,9 @@
     keepPanelInput.checked = settings.keepPanelAfterDeselect;
     fillLanguageOptions(sourceSelect, settings.sourceLanguage, true);
     fillLanguageOptions(targetSelect, settings.targetLanguage, false);
+    fontSizeInput.min = String(shared.FONT_SIZE_MIN);
+    fontSizeInput.max = String(shared.FONT_SIZE_MAX);
+    fontSizeInput.value = String(settings.fontSize);
   });
 
   enabledInput.addEventListener("change", function onEnabledChange() {
@@ -66,6 +70,66 @@
 
   targetSelect.addEventListener("change", function onTargetChange() {
     shared.saveSettings({ targetLanguage: targetSelect.value });
+  });
+
+  /*
+  ===========================================================================
+  確定した文字サイズを保存し、開いているページへ送る。
+  ============================================================================
+  */
+  function applyFontSize(rawValue, rewriteField) {
+    const size = shared.normalizeFontSize(rawValue);
+
+    if (rewriteField) {
+      fontSizeInput.value = String(size);
+    }
+
+    shared.saveSettings({ fontSize: size });
+
+    chrome.tabs.query({}, function onTabs(tabs) {
+      if (!tabs) {
+        return;
+      }
+
+      tabs.forEach(function sendToTab(tab) {
+        if (!tab || !tab.id) {
+          return;
+        }
+
+        chrome.tabs.sendMessage(tab.id, {
+          type: shared.MESSAGE_FONT_SIZE,
+          fontSize: size
+        }, function onSent() {
+          void chrome.runtime.lastError;
+        });
+      });
+    });
+  }
+
+  fontSizeInput.addEventListener("focus", function onFontSizeFocus() {
+    fontSizeInput.select();
+  });
+
+  fontSizeInput.addEventListener("input", function onFontSizeInput() {
+    if (fontSizeInput.value === "") {
+      return;
+    }
+
+    applyFontSize(fontSizeInput.value, false);
+  });
+
+  fontSizeInput.addEventListener("change", function onFontSizeChange() {
+    applyFontSize(fontSizeInput.value, true);
+  });
+
+  fontSizeInput.addEventListener("keydown", function onFontSizeKeyDown(event) {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    applyFontSize(fontSizeInput.value, true);
+    fontSizeInput.blur();
   });
 
   helpDetails.addEventListener("toggle", syncPopupHeight);

@@ -9,9 +9,13 @@ self.InstTranslateOverlay = (function createOverlay() {
   let root = null;
   let statusNode = null;
   let resultNode = null;
+  let sizeStyle = null;
 
   const STYLES = [
-    ":host { all: initial; }",
+    ":host {",
+    "  all: initial;",
+    "  font-size: medium !important;",
+    "}",
     "#panel {",
     "  position: fixed;",
     "  top: 16px;",
@@ -30,7 +34,6 @@ self.InstTranslateOverlay = (function createOverlay() {
     "  color: #202124;",
     "  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);",
     "  font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;",
-    "  font-size: 13px;",
     "  line-height: 1.55;",
     "}",
     "header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }",
@@ -40,6 +43,8 @@ self.InstTranslateOverlay = (function createOverlay() {
     "#status[hidden], #result[hidden] { display: none; }",
     "#result { margin: 0; white-space: pre-wrap; word-break: break-word; }"
   ].join("");
+
+  let resultFontSize = 14;
 
   /*
   ===========================================================================
@@ -80,12 +85,56 @@ self.InstTranslateOverlay = (function createOverlay() {
     resultNode = document.createElement("p");
     resultNode.id = "result";
 
+    sizeStyle = document.createElement("style");
+
     panel.appendChild(header);
     panel.appendChild(statusNode);
     panel.appendChild(resultNode);
     root.appendChild(style);
+    root.appendChild(sizeStyle);
     root.appendChild(panel);
     document.documentElement.appendChild(host);
+    applyFontSize();
+  }
+
+  /*
+  ===========================================================================
+  訳文の CSS に文字サイズを書き込み、他の指定より優先する。
+  ============================================================================
+  */
+  function applyFontSize() {
+    const css = [
+      "#panel, #result {",
+      "  font-size: " + resultFontSize + "px !important;",
+      "  line-height: 1.55 !important;",
+      "}"
+    ].join("");
+
+    if (sizeStyle) {
+      sizeStyle.textContent = css;
+    }
+
+    if (resultNode) {
+      resultNode.setAttribute(
+        "style",
+        "font-size: " + resultFontSize + "px !important; line-height: 1.55 !important;"
+      );
+    }
+  }
+
+  /*
+  ===========================================================================
+  訳文の文字サイズを変え、表示中ならすぐ反映する。
+  ============================================================================
+  */
+  function setFontSize(size) {
+    const next = Number(size);
+    if (!next) {
+      return;
+    }
+
+    resultFontSize = next;
+    applyFontSize();
   }
 
   /*
@@ -95,6 +144,11 @@ self.InstTranslateOverlay = (function createOverlay() {
   */
   function show(view) {
     ensurePanel();
+    if (view.fontSize != null && view.fontSize !== "") {
+      resultFontSize = Number(view.fontSize) || resultFontSize;
+    }
+
+    applyFontSize();
     host.style.display = "block";
     statusNode.textContent = view.status || "";
     statusNode.hidden = !view.status;
@@ -136,6 +190,7 @@ self.InstTranslateOverlay = (function createOverlay() {
   return {
     show: show,
     hide: hide,
+    setFontSize: setFontSize,
     containsEvent: containsEvent
   };
 })();

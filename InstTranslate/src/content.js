@@ -18,24 +18,16 @@
   let cachedSettings = Object.assign({}, shared.DEFAULT_SETTINGS);
 
   try {
-    chrome.storage.sync.get(shared.DEFAULT_SETTINGS, function onSettingsLoaded(settings) {
-      if (chrome.runtime.lastError || !settings) {
-        return;
-      }
-
-      cachedSettings = {
-        enabled: settings.enabled !== false,
-        keepPanelAfterDeselect: settings.keepPanelAfterDeselect === true,
-        sourceLanguage: settings.sourceLanguage || shared.DEFAULT_SETTINGS.sourceLanguage,
-        targetLanguage: settings.targetLanguage || shared.DEFAULT_SETTINGS.targetLanguage
-      };
+    shared.loadSettings().then(function onSettingsLoaded(settings) {
+      cachedSettings = settings;
+      overlay.setFontSize(cachedSettings.fontSize);
     });
   } catch (error) {
     // 拡張機能の再読み込み直後は storage が切れていることがある。
   }
 
   chrome.storage.onChanged.addListener(function onSettingsChanged(changes, areaName) {
-    if (areaName !== "sync") {
+    if (areaName !== "sync" && areaName !== "local") {
       return;
     }
 
@@ -59,6 +51,20 @@
       cachedSettings.targetLanguage = changes.targetLanguage.newValue;
       lastText = "";
     }
+
+    if (changes.fontSize) {
+      cachedSettings.fontSize = shared.normalizeFontSize(changes.fontSize.newValue);
+      overlay.setFontSize(cachedSettings.fontSize);
+    }
+  });
+
+  chrome.runtime.onMessage.addListener(function onRuntimeMessage(message) {
+    if (!message || message.type !== shared.MESSAGE_FONT_SIZE) {
+      return;
+    }
+
+    cachedSettings.fontSize = shared.normalizeFontSize(message.fontSize);
+    overlay.setFontSize(cachedSettings.fontSize);
   });
 
   /*
@@ -180,8 +186,16 @@
     const seq = ++requestSeq;
 
     try {
+      const latest = await shared.loadSettings();
+      cachedSettings.fontSize = latest.fontSize;
+    } catch (error) {
+      // 保存読みに失敗しても、手元の設定で続ける。
+    }
+
+    try {
       overlay.show({
-        status: "翻訳中…"
+        status: "翻訳中…",
+        fontSize: cachedSettings.fontSize
       });
     } catch (error) {
       return;
@@ -198,7 +212,8 @@
           }
 
           overlay.show({
-            status: "初回モデル準備中 " + percent + "%"
+            status: "初回モデル準備中 " + percent + "%",
+            fontSize: cachedSettings.fontSize
           });
         }
       );
@@ -214,7 +229,8 @@
         }
 
         overlay.show({
-          result: local.text
+          result: local.text,
+          fontSize: cachedSettings.fontSize
         });
         return;
       }

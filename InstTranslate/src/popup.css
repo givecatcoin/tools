@@ -53,6 +53,18 @@ select {
   padding: 4px 6px;
 }
 
+.size-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #5f6368;
+}
+
+.size-control input {
+  width: 72px;
+  padding: 4px 6px;
+}
+
 .switch {
   position: relative;
   display: inline-block;

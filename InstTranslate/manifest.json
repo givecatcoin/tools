@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "InstTranslate",
-  "version": "1.4.9",
+  "version": "1.5.5",
   "description": "テキストを選択した時点で、右上に翻訳を出します。",
   "permissions": [
     "storage",

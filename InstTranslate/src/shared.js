@@ -10,9 +10,12 @@ self.InstTranslate = {
     enabled: true,
     keepPanelAfterDeselect: false,
     sourceLanguage: "auto",
-    targetLanguage: "ja"
+    targetLanguage: "ja",
+    fontSize: 14
   },
 
+  FONT_SIZE_MIN: 10,
+  FONT_SIZE_MAX: 32,
   MIN_SELECTION_LENGTH: 2,
   KEY_DEBOUNCE_MS: 80,
   MAX_TEXT_LENGTH: 1800,
@@ -21,6 +24,7 @@ self.InstTranslate = {
   TRANSLATE_WINDOW_KEY: "translateWindowId",
   MESSAGE_TRANSLATE: "TRANSLATE_SELECTION",
   MESSAGE_SET_TEXT: "SET_SOURCE_TEXT",
+  MESSAGE_FONT_SIZE: "APPLY_FONT_SIZE",
 
   LANGUAGE_OPTIONS: [
     { code: "ja", label: "日本語" },
@@ -47,22 +51,58 @@ self.InstTranslate = {
   ============================================================================
   */
   loadSettings: async function loadSettings() {
-    const stored = await chrome.storage.sync.get(this.DEFAULT_SETTINGS);
+    const [localStored, syncStored] = await Promise.all([
+      chrome.storage.local.get(null),
+      chrome.storage.sync.get(null)
+    ]);
+    const stored = Object.assign({}, syncStored, localStored);
+
     return {
       enabled: stored.enabled !== false,
       keepPanelAfterDeselect: stored.keepPanelAfterDeselect === true,
       sourceLanguage: stored.sourceLanguage || this.DEFAULT_SETTINGS.sourceLanguage,
-      targetLanguage: stored.targetLanguage || this.DEFAULT_SETTINGS.targetLanguage
+      targetLanguage: stored.targetLanguage || this.DEFAULT_SETTINGS.targetLanguage,
+      fontSize: this.normalizeFontSize(
+        stored.fontSize == null ? this.DEFAULT_SETTINGS.fontSize : stored.fontSize
+      )
     };
   },
 
   /*
   ===========================================================================
-  渡された項目だけを設定へ書き込む。
+  文字サイズを、用意した段階のいずれかに揃える。
+  ============================================================================
+  */
+  normalizeFontSize: function normalizeFontSize(value) {
+    const size = Math.round(Number(value));
+    if (!size) {
+      return this.DEFAULT_SETTINGS.fontSize;
+    }
+
+    if (size < this.FONT_SIZE_MIN) {
+      return this.FONT_SIZE_MIN;
+    }
+
+    if (size > this.FONT_SIZE_MAX) {
+      return this.FONT_SIZE_MAX;
+    }
+
+    return size;
+  },
+
+  /*
+  ===========================================================================
+  渡された項目だけを、この端末と同期先の両方へ書き込む。
   ============================================================================
   */
   saveSettings: async function saveSettings(partial) {
-    await chrome.storage.sync.set(partial);
+    await chrome.storage.local.set(partial);
+
+    try {
+      await chrome.storage.sync.set(partial);
+    } catch (error) {
+      // 同期保存が使えない端末でも、この端末の設定は残す。
+    }
   },
 
   /*
